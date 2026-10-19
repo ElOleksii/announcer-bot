@@ -3,7 +3,7 @@ import { GAME_IN_PROGRESS, type GsiPayload } from '../gsi/schema.js';
 import type { Logger } from '../logger.js';
 import { computeBlame, findOurTeam, type BlameReport } from './blame.js';
 import { computeMvp, type MvpReport } from './mvp.js';
-import { MatchNotFoundError, steamIdToAccountId, type OpenDotaClient } from './opendota.js';
+import { MatchNotFoundError, steamIdToAccountId, type OdMatch, type OpenDotaClient } from './opendota.js';
 import {
   VERDICT_MAX_LENGTH,
   fallbackMvpVerdict,
@@ -53,15 +53,22 @@ export class MatchAnalyzer {
    * Either way a points table plus a short verdict (Gemini or built-in).
    */
   async analyze(hint: MatchHint, tone: AnalysisTone, wait: { timeoutMs: number; pollMs: number }): Promise<AnalysisResult> {
-    const { openDota } = this.options;
     let match;
     try {
-      match = await openDota.getParsedMatch(hint.matchId, wait);
+      match = await this.options.openDota.getParsedMatch(hint.matchId, wait);
     } catch (err) {
       if (err instanceof MatchNotFoundError) return { kind: 'not-found' };
       throw err;
     }
+    return this.analyzeMatch(match, hint, tone);
+  }
 
+  /**
+   * Analyses an already fetched match. `useWriter: false` skips Gemini (used for the quick
+   * preliminary version while the replay is still being parsed).
+   */
+  async analyzeMatch(match: OdMatch, hint: MatchHint, tone: AnalysisTone, { useWriter = true }: { useWriter?: boolean } = {}): Promise<AnalysisResult> {
+    const { openDota } = this.options;
     const ourRadiant =
       hint.team != null ? hint.team === 'radiant' : findOurTeam(match, { accountId: hint.accountId, heroId: hint.heroId });
     if (ourRadiant === null) return { kind: 'unknown-team' };
@@ -75,6 +82,7 @@ export class MatchAnalyzer {
       const verdictText = await this.writeVerdict(
         { system: mvpSystemPrompt(tone), user: mvpUserPrompt(report) },
         () => fallbackMvpVerdict(report, tone),
+        useWriter,
       );
       return { kind: 'ok', outcome: 'win', report, chatText: formatMvpChat(report, verdictText), verdictText };
     }
@@ -84,13 +92,14 @@ export class MatchAnalyzer {
     const verdictText = await this.writeVerdict(
       { system: verdictSystemPrompt(tone), user: verdictUserPrompt(report) },
       () => fallbackVerdict(report, tone),
+      useWriter,
     );
     return { kind: 'ok', outcome: 'loss', report, chatText: formatChatReport(report, verdictText), verdictText };
   }
 
-  private async writeVerdict(prompt: { system: string; user: string }, fallback: () => string): Promise<string> {
+  private async writeVerdict(prompt: { system: string; user: string }, fallback: () => string, useWriter: boolean): Promise<string> {
     const { writer } = this.options;
-    if (writer) {
+    if (writer && useWriter) {
       try {
         const text = await writer.complete({ ...prompt, maxLength: VERDICT_MAX_LENGTH, retries: 3 }, AbortSignal.timeout(WRITER_TIMEOUT_MS));
         this.log.info({ model: writer.lastModel }, 'verdict written by Gemini');

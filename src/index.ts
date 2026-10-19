@@ -1,4 +1,5 @@
 import { MatchAnalyzer, MatchEndWatcher, resolveMatchHint, type MatchHint } from './analysis/analyzer.js';
+import { AnalysisJob, JOB_STATE_LABELS, type AnalysisSink } from './analysis/job.js';
 import { OpenDotaClient } from './analysis/opendota.js';
 import type { AnalysisTone } from './analysis/report.js';
 import { Announcer } from './announcer.js';
@@ -13,7 +14,7 @@ import { TemplateWriter } from './commentary/templates.js';
 import { ConfigError, loadConfig, loadDotEnv, type AppConfig } from './config/env.js';
 import { knownSoundKeys, loadSoundsConfig } from './config/sounds.js';
 import { createDiscordBot, type DiscordBot } from './discord/client.js';
-import { clampMessage, type AnalyzeOutcome } from './discord/commands.js';
+import type { AnalyzeOutcome } from './discord/commands.js';
 import { VoiceManager } from './discord/voice.js';
 import { describeEvent } from './game/events.js';
 import { KillTracker } from './game/kill-tracker.js';
@@ -82,36 +83,33 @@ async function main(): Promise<void> {
   const contextTracker = new KillContextTracker();
 
   // Match analysis (chat only): OpenDota stats → blame (loss) or MVP (win) scores → Gemini verdict (or built-in text).
+  const openDota = new OpenDotaClient();
   const analyzer = new MatchAnalyzer({
-    openDota: new OpenDotaClient(),
+    openDota,
     writer: config.analysis.gemini ? new GeminiWriter(config.analysis.gemini) : null,
     logger,
   });
   const matchWatcher = new MatchEndWatcher();
   let autoAnalyze = config.analysis.auto;
-  let analysing = false;
   const analysisLog = logger.child({ module: 'analysis' });
-  logger.info({ auto: autoAnalyze, tone: config.analysis.tone, verdict: config.analysis.gemini ? 'gemini' : 'built-in' }, 'loss analysis ready');
+  logger.info({ auto: autoAnalyze, tone: config.analysis.tone, verdict: config.analysis.gemini ? 'gemini' : 'built-in' }, 'match analysis ready');
 
-  /** Runs one analysis. Returns null when another one is already running. */
-  const runAnalysis = async (
-    hint: MatchHint,
-    tone: AnalysisTone,
-    wait: { timeoutMs: number; pollMs: number },
-  ): Promise<AnalyzeOutcome | null> => {
-    if (analysing) return null;
-    analysing = true;
-    try {
-      const result = await analyzer.analyze(hint, tone, wait);
-      if (result.kind !== 'ok') return result;
-      return { kind: 'ok', chatText: result.chatText };
-    } catch (err) {
-      analysisLog.error({ err: (err as Error).message, matchId: hint.matchId }, 'analysis failed');
-      return { kind: 'error', message: (err as Error).message };
-    } finally {
-      analysing = false;
-    }
+  /** One job per match; different matches are analysed independently. */
+  const jobs = new Map<string, AnalysisJob>();
+  const startJob = (hint: MatchHint, tone: AnalysisTone, sink: AnalysisSink): AnalyzeOutcome => {
+    const running = jobs.get(hint.matchId);
+    if (running) return { kind: 'already-running', url: running.url };
+    const job = new AnalysisJob({ hint, tone, openDota, analyzer, sink, logger });
+    jobs.set(hint.matchId, job);
+    void job.run().finally(() => jobs.delete(hint.matchId));
+    return { kind: 'started' };
   };
+  /** Without Discord (local mode) analyses only go to the log. */
+  const logSink = (): AnalysisSink => ({
+    async update(text) {
+      analysisLog.info({ text }, 'analysis update');
+    },
+  });
 
   const dump = config.gsiDumpFile ? new PayloadDump({ file: config.gsiDumpFile, logger }) : null;
   const gameLog = logger.child({ module: 'game' });
@@ -125,14 +123,8 @@ async function main(): Promise<void> {
       dump?.record(payload, now);
       const finishedMatch = matchWatcher.observe(payload);
       if (finishedMatch && autoAnalyze) {
-        analysisLog.info({ matchId: finishedMatch.matchId }, 'match finished, analysing once OpenDota has it');
-        // OpenDota needs a few minutes after the match; poll up to 20 minutes.
-        void runAnalysis(finishedMatch, config.analysis.tone, { timeoutMs: 20 * 60_000, pollMs: 60_000 }).then(async (outcome) => {
-          if (outcome?.kind === 'ok') {
-            const posted = await bot?.postAnalysis(clampMessage(outcome.chatText), config.analysis.channelId);
-            if (!posted) analysisLog.warn({ matchId: finishedMatch.matchId }, 'analysis ready but no channel to post it (set ANALYSIS_CHANNEL_ID)');
-          } else if (outcome) analysisLog.info({ outcome: outcome.kind, matchId: finishedMatch.matchId }, 'auto analysis skipped');
-        });
+        analysisLog.info({ matchId: finishedMatch.matchId }, 'match finished, starting analysis');
+        startJob(finishedMatch, config.analysis.tone, bot ? bot.createChannelSink(config.analysis.channelId) : logSink());
       }
       contextTracker.observe(payload, now);
       const event = tracker.process(payload, now);
@@ -169,18 +161,31 @@ async function main(): Promise<void> {
         },
         status: () => status.get(),
         now: () => Date.now(),
-        async analyze({ matchId, tone, team }) {
+        async analyze({ matchId, tone, team }, sink) {
           const hint = resolveMatchHint({ matchId, team }, matchWatcher.lastMatch(), config.analysis.playerAccountId);
           if (!hint) return { kind: 'no-match' };
-          // Interaction tokens live 15 minutes; don't wait for a parse longer than ~4.
-          const outcome = await runAnalysis(hint, tone ?? config.analysis.tone, { timeoutMs: 4 * 60_000, pollMs: 30_000 });
-          return outcome ?? { kind: 'busy' };
+          return startJob(hint, tone ?? config.analysis.tone, sink);
+        },
+        async analysisStatus() {
+          const target = await bot?.describeAnalysisTarget(config.analysis.channelId);
+          const lines = [`**Розбори:** авто ${autoAnalyze ? 'увімкнено' : 'вимкнено'} · канал: ${target?.text ?? '—'}`];
+          for (const job of jobs.values()) {
+            lines.push(`• матч \`${job.matchId}\` — ${JOB_STATE_LABELS[job.state]}, ${Math.round((Date.now() - job.startedAt) / 60_000)} хв`);
+          }
+          return lines;
         },
         getAutoAnalyze: () => autoAnalyze,
         setAutoAnalyze(on) {
           autoAnalyze = on;
           analysisLog.info({ auto: on }, 'auto analysis toggled');
         },
+      },
+      async onReady() {
+        // Say up front where analyses will go, so a missing permission shows before the first match ends.
+        const target = await bot?.describeAnalysisTarget(config.analysis.channelId);
+        if (!target) return;
+        if (target.ok) analysisLog.info({ channel: target.text }, 'analyses will be posted here');
+        else analysisLog.warn({ channel: target.text }, 'analyses cannot be posted yet');
       },
     });
   }

@@ -1,8 +1,9 @@
-import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
+import { Client, Events, GatewayIntentBits, MessageFlags, PermissionFlagsBits, type Message } from 'discord.js';
+import type { AnalysisSink } from '../analysis/job.js';
 import type { DiscordConfig } from '../config/env.js';
 import type { SoundKey } from '../game/events.js';
 import type { Logger } from '../logger.js';
-import { handleCommand, registerGuildCommands, type CommandContext } from './commands.js';
+import { clampMessage, handleCommand, registerGuildCommands, type CommandContext } from './commands.js';
 import type { VoiceManager } from './voice.js';
 
 export interface DiscordBotOptions {
@@ -11,19 +12,23 @@ export interface DiscordBotOptions {
   voice: VoiceManager;
   soundKeys: readonly SoundKey[];
   commands: Omit<CommandContext, 'joinChannel' | 'leave' | 'voiceChannelId'>;
+  /** Called once the bot is logged in and the server is available. */
+  onReady?: () => void | Promise<void>;
 }
 
 export interface DiscordBot {
   start(): Promise<void>;
   stop(): Promise<void>;
   /**
-   * Posts a loss analysis: to `channelId` if given, else the chat of the bot's voice channel,
-   * else the server's system channel. Needs the Send Messages permission there.
+   * A message for a match analysis, created on the first update and edited afterwards. Posted to
+   * `channelId` if given, else the chat of the bot's voice channel, else the server's system channel.
    */
-  postAnalysis(text: string, channelId: string | null): Promise<boolean>;
+  createChannelSink(channelId: string | null): AnalysisSink;
+  /** Where analyses go and whether the bot may write there (for the startup log and /status). */
+  describeAnalysisTarget(channelId: string | null): Promise<{ ok: boolean; text: string }>;
 }
 
-export function createDiscordBot({ config, logger, voice, soundKeys, commands }: DiscordBotOptions): DiscordBot {
+export function createDiscordBot({ config, logger, voice, soundKeys, commands, onReady }: DiscordBotOptions): DiscordBot {
   const log = logger.child({ module: 'discord' });
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 
@@ -45,7 +50,7 @@ export function createDiscordBot({ config, logger, voice, soundKeys, commands }:
 
   const inviteUrl =
     `https://discord.com/oauth2/authorize?client_id=${config.clientId}&scope=bot+applications.commands` +
-    `&permissions=3146752&guild_id=${config.guildId}&disable_guild_select=true`;
+    `&permissions=3148800&guild_id=${config.guildId}&disable_guild_select=true`;
 
   const registerCommands = async () => {
     try {
@@ -60,6 +65,7 @@ export function createDiscordBot({ config, logger, voice, soundKeys, commands }:
     log.info({ user: ready.user.tag }, 'logged in to Discord');
     if (ready.guilds.cache.has(config.guildId)) {
       await registerCommands();
+      await Promise.resolve(onReady?.()).catch((err: unknown) => log.warn({ err: (err as Error).message }, 'onReady failed'));
     } else {
       // Registration would fail with "Missing Access"; it runs on GuildCreate once the bot is invited.
       log.warn({ guildId: config.guildId, inviteUrl }, 'bot is not a member of GUILD_ID yet; open the invite URL, no restart needed');
@@ -103,20 +109,59 @@ export function createDiscordBot({ config, logger, voice, soundKeys, commands }:
       voice.leave();
       await client.destroy();
     },
-    async postAnalysis(text, channelId) {
-      const candidates = [channelId, voice.connectedChannelId, client.guilds.cache.get(config.guildId)?.systemChannelId ?? null];
-      for (const id of candidates) {
-        if (!id) continue;
-        try {
-          const channel = client.channels.cache.get(id) ?? (await client.channels.fetch(id));
-          if (!channel?.isSendable()) continue;
-          await channel.send(text);
-          return true;
-        } catch (err) {
-          log.warn({ err: (err as Error).message, channelId: id }, 'cannot post the analysis there (missing Send Messages permission?)');
-        }
+    createChannelSink(channelId) {
+      let message: Message | null = null;
+      return {
+        get url() {
+          return message?.url ?? null;
+        },
+        async update(text) {
+          const content = clampMessage(text);
+          if (message) {
+            try {
+              await message.edit(content);
+              return;
+            } catch (err) {
+              log.warn({ err: (err as Error).message }, 'cannot edit the analysis message, posting a new one');
+            }
+          }
+          for (const id of analysisCandidates(channelId)) {
+            try {
+              const channel = client.channels.cache.get(id) ?? (await client.channels.fetch(id));
+              if (!channel?.isSendable()) continue;
+              message = await channel.send(content);
+              return;
+            } catch (err) {
+              log.warn({ err: (err as Error).message, channelId: id }, 'cannot post the analysis there (missing Send Messages permission?)');
+            }
+          }
+          throw new Error('no channel to post the analysis (set ANALYSIS_CHANNEL_ID and give the bot Send Messages)');
+        },
+      };
+    },
+    async describeAnalysisTarget(channelId) {
+      const guild = client.guilds.cache.get(config.guildId);
+      const me = guild?.members.me;
+      const id = channelId ?? guild?.systemChannelId ?? null;
+      const source = channelId ? 'ANALYSIS_CHANNEL_ID' : 'системний канал сервера';
+      const voiceNote = channelId ? '' : ' (а якщо бот у войсі — спершу чат войсу)';
+      if (!id || !guild || !me) return { ok: false, text: `канал не задано і системного каналу немає — задай ANALYSIS_CHANNEL_ID${voiceNote}` };
+      try {
+        const channel = guild.channels.cache.get(id) ?? (await guild.channels.fetch(id));
+        if (!channel) return { ok: false, text: `канал ${id} з ${source} не знайдено` };
+        const canSend = channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]) ?? false;
+        return canSend
+          ? { ok: true, text: `<#${id}> (${source})${voiceNote} ✅` }
+          : { ok: false, text: `<#${id}> (${source}) ❌ немає права View Channel / Send Messages${voiceNote}` };
+      } catch (err) {
+        return { ok: false, text: `канал ${id} недоступний: ${(err as Error).message}` };
       }
-      return false;
     },
   };
+
+  /** Explicit channel, else the chat of the bot's voice channel, else the server's system channel. */
+  function analysisCandidates(channelId: string | null): string[] {
+    const ids = [channelId, voice.connectedChannelId, client.guilds.cache.get(config.guildId)?.systemChannelId ?? null];
+    return [...new Set(ids.filter((id): id is string => !!id))];
+  }
 }

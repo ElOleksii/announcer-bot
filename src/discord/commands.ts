@@ -6,8 +6,10 @@ import {
   Routes,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
+  type Message,
   type GuildMember,
 } from 'discord.js';
+import type { AnalysisSink } from '../analysis/job.js';
 import { ANALYSIS_TONES, type AnalysisTone } from '../analysis/report.js';
 import { ANNOUNCER_MODES, type AnnouncerMode } from '../announcer.js';
 import { describeEvent, type SoundKey } from '../game/events.js';
@@ -27,13 +29,41 @@ const TONE_LABELS: Record<AnalysisTone, string> = { harsh: 'жорстко', lig
 /** Discord message limit. */
 const MAX_MESSAGE = 2000;
 
-export type AnalyzeOutcome =
-  | { kind: 'ok'; chatText: string }
-  | { kind: 'not-found' }
-  | { kind: 'unknown-team' }
-  | { kind: 'no-match' }
-  | { kind: 'busy' }
-  | { kind: 'error'; message: string };
+/** The analysis itself arrives through the sink; this only says whether a job was started. */
+export type AnalyzeOutcome = { kind: 'started' } | { kind: 'already-running'; url: string | null } | { kind: 'no-match' };
+
+/** Interaction tokens expire after 15 minutes; switch to a channel message a bit earlier. */
+const INTERACTION_EDIT_WINDOW_MS = 14 * 60_000;
+
+/**
+ * Sink for /analyze: edits the command's reply while the interaction token is valid,
+ * then continues in a regular message in the same channel.
+ */
+export function interactionSink(interaction: ChatInputCommandInteraction<'cached'>, now: () => number = Date.now): AnalysisSink {
+  const started = now();
+  let replyUrl: string | null = null;
+  let fallback: Message | null = null;
+  return {
+    get url() {
+      return fallback?.url ?? replyUrl;
+    },
+    async update(text) {
+      const content = clampMessage(text);
+      if (!fallback && now() - started < INTERACTION_EDIT_WINDOW_MS) {
+        const reply = await interaction.editReply(content);
+        replyUrl = reply.url;
+        return;
+      }
+      if (fallback) {
+        await fallback.edit(content);
+        return;
+      }
+      const channel = interaction.channel;
+      if (!channel?.isSendable()) throw new Error('cannot post the analysis in this channel');
+      fallback = await channel.send(content);
+    },
+  };
+}
 
 export function clampMessage(text: string): string {
   if (text.length <= MAX_MESSAGE) return text;
@@ -126,7 +156,9 @@ export interface CommandContext {
     matchId: string | null;
     tone: AnalysisTone | null;
     team: 'radiant' | 'dire' | null;
-  }): Promise<AnalyzeOutcome>;
+  }, sink: AnalysisSink): Promise<AnalyzeOutcome>;
+  /** Extra /status lines about match analysis (target channel, running jobs). */
+  analysisStatus(): Promise<string[]>;
   getAutoAnalyze(): boolean;
   setAutoAnalyze(on: boolean): void;
   status(): Readonly<StatusSnapshot>;
@@ -182,7 +214,8 @@ export async function handleCommand(interaction: ChatInputCommandInteraction<'ca
     }
 
     case 'status': {
-      const content = formatStatus(ctx.status(), ctx.voiceChannelId(), ctx.now(), ctx.getMode());
+      const extra = await ctx.analysisStatus().catch(() => []);
+      const content = [formatStatus(ctx.status(), ctx.voiceChannelId(), ctx.now(), ctx.getMode()), ...extra].join('\n');
       await interaction.reply({ content, ...ephemeral });
       return;
     }
@@ -211,14 +244,17 @@ export async function handleCommand(interaction: ChatInputCommandInteraction<'ca
     }
 
     case 'analyze': {
-      // Public reply: the analysis is for everyone in the channel. Parsing can take a few minutes.
+      // Public reply: the analysis is for everyone in the channel. The job edits this reply as data arrives.
       await interaction.deferReply();
-      const outcome = await ctx.analyze({
-        matchId: interaction.options.getString('match_id')?.trim() || null,
-        tone: (interaction.options.getString('tone') as AnalysisTone | null) ?? null,
-        team: (interaction.options.getString('team') as 'radiant' | 'dire' | null) ?? null,
-      });
-      await interaction.editReply(clampMessage(formatAnalyzeOutcome(outcome)));
+      const outcome = await ctx.analyze(
+        {
+          matchId: interaction.options.getString('match_id')?.trim() || null,
+          tone: (interaction.options.getString('tone') as AnalysisTone | null) ?? null,
+          team: (interaction.options.getString('team') as 'radiant' | 'dire' | null) ?? null,
+        },
+        interactionSink(interaction),
+      );
+      if (outcome.kind !== 'started') await interaction.editReply(formatAnalyzeOutcome(outcome));
       return;
     }
 
@@ -238,20 +274,14 @@ export async function handleCommand(interaction: ChatInputCommandInteraction<'ca
   }
 }
 
-export function formatAnalyzeOutcome(outcome: AnalyzeOutcome): string {
+export function formatAnalyzeOutcome(outcome: Exclude<AnalyzeOutcome, { kind: 'started' }>): string {
   switch (outcome.kind) {
-    case 'ok':
-      return outcome.chatText;
-    case 'not-found':
-      return 'OpenDota не має цього матчу. Ігри з ботами й лобі туди не потрапляють; для свіжого матчу спробуй за кілька хвилин.';
-    case 'unknown-team':
-      return 'Не можу визначити, за яку команду ти грав (приватний профіль?). Вкажи `team:` у команді.';
+    case 'already-running':
+      return outcome.url
+        ? `Цей матч я вже розбираю — результат з'явиться тут: ${outcome.url}`
+        : 'Цей матч я вже розбираю — результат з’явиться в повідомленні, яке я надіслав раніше.';
     case 'no-match':
       return 'Не знаю, який матч розбирати: вкажи `match_id` або зіграй матч із запущеним ботом.';
-    case 'busy':
-      return 'Вже розбираю інший матч, зачекай хвилинку.';
-    case 'error':
-      return `Не вийшло: ${outcome.message}`;
   }
 }
 
