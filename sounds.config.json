@@ -1,0 +1,31 @@
+{
+  "volume": 0.8,
+  "soundsDir": "sounds",
+  "streaks": {
+    "3": "killing_spree",
+    "4": "dominating",
+    "5": "mega_kill",
+    "6": "unstoppable",
+    "7": "wicked_sick",
+    "8": "monster_kill",
+    "9": "godlike",
+    "10": "beyond_godlike"
+  },
+  "events": {
+    "kill": [
+      "kill_1.mp3",
+      "kill_2.mp3",
+      "kill_3.mp3",
+      "we_do_what_we_want_2m07.mp3"
+    ],
+    "double_kill": [
+      "double_kill_1.mp3",
+      "double_kill_2.mp3",
+      "double_kill_3.mp3",
+      "double_kill_4.mp3",
+      "double_kill_5.mp3"
+    ],
+    "triple_kill": ["triple_kill_1.mp3"],
+    "ultra_kill": ["ultra_kill_1.mp3"]
+  }
+}

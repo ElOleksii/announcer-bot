@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.log
+coverage/
+
+# Generated GSI config contains your GSI_TOKEN
+gamestate_integration_*.cfg
+
+# GSI payload dumps
+logs/
+
+# Your own audio (often copyrighted): keep it local, commit only the instructions
+sounds/*
+!sounds/README.md

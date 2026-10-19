@@ -1,0 +1,11 @@
+{
+  "provider": {
+    "name": "Dota 2",
+    "appid": 570,
+    "version": 47,
+    "timestamp": 1759937000
+  },
+  "auth": {
+    "token": "test-token"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "provider": {
+    "name": "Dota 2",
+    "appid": 570,
+    "version": 47,
+    "timestamp": 1759938000
+  },
+  "map": {
+    "name": "start",
+    "matchid": "8123456789",
+    "game_time": 600,
+    "clock_time": 510,
+    "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS",
+    "paused": false
+  },
+  "player": {
+    "team2": {
+      "player0": { "steamid": "76561198000000001", "name": "a", "activity": "playing", "kills": 5, "deaths": 0, "kill_streak": 5 },
+      "player1": { "steamid": "76561198000000002", "name": "b", "activity": "playing", "kills": 1, "deaths": 2, "kill_streak": 0 }
+    },
+    "team3": {
+      "player5": { "steamid": "76561198000000006", "name": "c", "activity": "playing", "kills": 2, "deaths": 3, "kill_streak": 1 }
+    }
+  },
+  "auth": {
+    "token": "test-token"
+  }
+}

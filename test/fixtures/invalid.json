@@ -1,0 +1,19 @@
+{
+  "provider": {
+    "name": "Dota 2",
+    "appid": 570
+  },
+  "map": {
+    "matchid": "8123456789",
+    "game_time": "ten minutes",
+    "game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"
+  },
+  "player": {
+    "activity": "playing",
+    "kills": -3,
+    "deaths": 1
+  },
+  "auth": {
+    "token": "test-token"
+  }
+}
