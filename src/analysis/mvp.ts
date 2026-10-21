@@ -2,10 +2,14 @@ import type { HeroInfo, OdMatch, OdPlayer } from './opendota.js';
 import {
   DEATHS,
   KILLS,
-  at,
+  LANE_MINUTE,
   avg,
   isLeaver,
+  laneFact,
+  laneMatchup,
   mmss,
+  notApplicable,
+  roleScale,
   num,
   pct,
   plural,
@@ -59,7 +63,7 @@ export interface PlayerContribution {
   slot: number;
   hero: string;
   position: number;
-  /** Sum of categories before modifiers. */
+  /** Sum of categories, rescaled to 0–100 for the role (see roleScale), before modifiers. */
   raw: number;
   /** Final score 0–100. */
   score: number;
@@ -82,7 +86,7 @@ export interface MvpReport {
 }
 
 export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean): MvpReport {
-  const { ours, ourPos, opponentOf } = teams(match, ourTeamIsRadiant);
+  const { ours, theirs, ourPos, opponentOf } = teams(match, ourTeamIsRadiant);
   const heroName = (p: OdPlayer) => heroes.get(p.hero_id)?.localized_name ?? `hero ${p.hero_id}`;
   const duration = match.duration;
 
@@ -117,31 +121,21 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
       },
     ]);
 
-    // Lane at 10 minutes, ahead of the direct opponent.
-    const myGold10 = at(p.gold_t, 10);
-    const oppGold10 = opp ? at(opp.gold_t, 10) : null;
-    const myLh10 = at(p.lh_t, 10);
-    const oppLh10 = opp ? at(opp.lh_t, 10) : null;
+    // Lane at 10 minutes: our side of the lane ahead of the enemies who actually stood in it.
+    const matchup = laneMatchup(p, ours, theirs, LANE_MINUTE);
+    const ahead = (t: [number, number] | null | undefined) => (t ? ramp((t[0] - t[1]) / Math.max(t[1], 1), 0.1, 0.5) : null);
     const lane = cat(
       'lane',
       [
-        {
-          weight: 0.6,
-          value: myGold10 === null || oppGold10 === null ? null : ramp((myGold10 - oppGold10) / Math.max(oppGold10, 1), 0.1, 0.5),
-          evidence: `на 10-й хвилині ${myGold10} золота проти ${oppGold10} у ${oppName}`,
-        },
-        {
-          weight: 0.4,
-          value: myLh10 === null || oppLh10 === null ? null : ramp((myLh10 - oppLh10) / Math.max(oppLh10, 1), 0.15, 0.6),
-          evidence: `${plural(myLh10 ?? 0, ['добивання', 'добивання', 'добивань'])} на 10-й хвилині проти ${oppLh10}`,
-        },
+        { weight: 0.6, value: ahead(matchup?.gold), evidence: matchup?.gold ? laneFact(matchup, matchup.gold, 'золота', heroName) : '' },
+        { weight: 0.4, value: ahead(matchup?.xp), evidence: matchup?.xp ? laneFact(matchup, matchup.xp, 'досвіду', heroName) : '' },
       ],
       support ? SUPPORT_LANE_FACTOR : 1,
     );
 
     // Farm (cores only), ahead of the direct opponent.
     const farm = support
-      ? { ...cat('farm', []), available: true }
+      ? notApplicable('farm', MVP_CATEGORY_MAX.farm)
       : cat('farm', [
           {
             weight: 0.6,
@@ -231,7 +225,7 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
     }
 
     const categories = [fights, lane, farm, contribution, closing, surge];
-    const raw = round1(sum(categories.map((c) => c.points)));
+    const raw = round1(sum(categories.map((c) => c.points)) * roleScale(categories));
 
     const leaver = isLeaver(p);
     let factor = 1;

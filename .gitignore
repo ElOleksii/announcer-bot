@@ -13,3 +13,6 @@ logs/
 # Your own audio (often copyrighted): keep it local, commit only the instructions
 sounds/*
 !sounds/README.md
+
+# Real matches collected for calibration (npm run collect)
+data/

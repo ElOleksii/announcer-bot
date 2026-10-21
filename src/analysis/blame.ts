@@ -1,11 +1,16 @@
 import type { HeroInfo, OdMatch, OdPlayer } from './opendota.js';
 import {
   DEATHS,
+  LANE_MINUTE,
   assignPositions,
   at,
   avg,
   isLeaver,
+  laneFact,
+  laneMatchup,
   mmss,
+  notApplicable,
+  roleScale,
   num,
   pct,
   plural,
@@ -63,7 +68,7 @@ export interface PlayerBlame {
   slot: number;
   hero: string;
   position: number;
-  /** Sum of categories before mitigations. */
+  /** Sum of categories, rescaled to 0–100 for the role (see roleScale), before mitigations. */
   raw: number;
   /** Final score 0–100. */
   score: number;
@@ -157,36 +162,25 @@ export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourT
     // The "longest in tavern" text is only true for the actual maximum.
     if (dead !== null && dead < Math.max(...deadTimes)) feed.evidence = feed.evidence.filter((e) => !e.includes('у таверні'));
 
-    // B. Lane (at 10 minutes, against the direct opponent)
-    const soloVsTwo = isSoloVsTwo(p, ours, theirs, position);
-    const myGold10 = at(p.gold_t, 10);
-    const oppGold10 = opp ? at(opp.gold_t, 10) : null;
-    const myLh10 = at(p.lh_t, 10);
-    const oppLh10 = opp ? at(opp.lh_t, 10) : null;
-    let lane = category(
+    // B. Lane at 10 minutes: our side of the lane against the enemies who actually stood in it.
+    const matchup = laneMatchup(p, ours, theirs, LANE_MINUTE);
+    const behind = (t: [number, number] | null | undefined) => (t ? ramp((t[1] - t[0]) / Math.max(t[1], 1), 0.1, 0.5) : null);
+    const lane = category(
       'lane',
       [
-        {
-          weight: 0.6,
-          value: myGold10 === null || oppGold10 === null ? null : ramp((oppGold10 - myGold10) / Math.max(oppGold10, 1), 0.1, 0.5),
-          evidence: `на 10-й хвилині ${myGold10} золота проти ${oppGold10} у ${oppName}`,
-        },
-        {
-          weight: 0.4,
-          value: myLh10 === null || oppLh10 === null ? null : ramp((oppLh10 - myLh10) / Math.max(oppLh10, 1), 0.15, 0.6),
-          evidence: `${plural(myLh10 ?? 0, ['добивання', 'добивання', 'добивань'])} на 10-й хвилині проти ${oppLh10}`,
-        },
+        { weight: 0.6, value: behind(matchup?.gold), evidence: matchup?.gold ? laneFact(matchup, matchup.gold, 'золота', heroName) : '' },
+        { weight: 0.4, value: behind(matchup?.xp), evidence: matchup?.xp ? laneFact(matchup, matchup.xp, 'досвіду', heroName) : '' },
       ],
       support ? SUPPORT_LANE_FACTOR : 1,
     );
-    if (soloVsTwo && lane.points > 0) {
-      lane = { ...lane, points: 0, evidence: [] };
+    // Uneven lanes are not compared at all; say why for the one who stood alone.
+    if (position !== 2 && matchup && matchup.allies.length === 1 && matchup.enemies.length >= 2) {
       mitigations.push('стояв сам проти двох на лайні');
     }
 
     // C. Farm (cores only)
     const farm = support
-      ? category('farm', [])
+      ? notApplicable('farm', CATEGORY_MAX.farm)
       : category('farm', [
           {
             weight: 0.6,
@@ -199,7 +193,6 @@ export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourT
             evidence: `XPM ${p.xp_per_min} проти ${opp?.xp_per_min} у ${oppName}`,
           },
         ]);
-    if (support) farm.available = true; // not applicable rather than missing
 
     // D. Contribution
     const tp = num(p.teamfight_participation);
@@ -283,7 +276,7 @@ export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourT
     }
 
     const categories = [feed, lane, farm, contribution, endgame, throwCat];
-    const raw = round1(sum(categories.map((c) => c.points)));
+    const raw = round1(sum(categories.map((c) => c.points)) * roleScale(categories));
 
     let factor = 1;
     if (p.player_slot === topDamageSlot || p.player_slot === topNetWorthSlot) {
@@ -344,14 +337,6 @@ function decideVerdict(
     return { kind: 'culprit', slot: first.slot };
   }
   return { kind: 'team', reason: 'no-clear-culprit' };
-}
-
-/** Safe/off lane with no lane partner while two or more enemies were in that lane. */
-function isSoloVsTwo(p: OdPlayer, ours: OdPlayer[], theirs: OdPlayer[], position: number): boolean {
-  const lane = num(p.lane);
-  if (position === 2 || lane === null || lane < 1 || lane > 3 || p.is_roaming) return false;
-  const inLane = (team: OdPlayer[]) => team.filter((x) => num(x.lane) === lane && !x.is_roaming).length;
-  return inLane(ours) === 1 && inLane(theirs) >= 2;
 }
 
 /** Which team "we" were on: by account id (from GSI), else by hero id. */

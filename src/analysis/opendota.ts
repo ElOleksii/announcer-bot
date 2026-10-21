@@ -40,6 +40,7 @@ const playerSchema = z.looseObject({
   abandons: z.number().nullable().optional(),
   gold_t: z.array(z.number()).nullable().optional(),
   lh_t: z.array(z.number()).nullable().optional(),
+  xp_t: z.array(z.number()).nullable().optional(),
   deaths_log: z.array(deathSchema).nullable().optional(),
   kills_log: z.array(z.looseObject({ time: z.number(), key: z.string().optional() })).nullable().optional(),
   buyback_log: z.array(z.looseObject({ time: z.number() })).nullable().optional(),

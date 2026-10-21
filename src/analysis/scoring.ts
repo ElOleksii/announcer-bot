@@ -8,6 +8,8 @@ export interface CategoryScore<K extends string = string> {
   max: number;
   /** false when the match lacks the data for this category (e.g. not parsed). */
   available: boolean;
+  /** false when the category does not apply to the player's role at all (farm for supports). */
+  applicable: boolean;
   /** Facts with numbers that explain the points. */
   evidence: string[];
 }
@@ -28,7 +30,7 @@ export function ramp(x: number, lo: number, hi: number): number {
 /** Weighted average of the available parts, scaled to `max` points. Missing parts don't count. */
 export function scoreCategory<K extends string>(key: K, max: number, parts: Part[], factor = 1): CategoryScore<K> {
   const available = parts.filter((p) => p.value !== null);
-  if (available.length === 0) return { key, points: 0, max, available: false, evidence: [] };
+  if (available.length === 0) return { key, points: 0, max, available: false, applicable: true, evidence: [] };
   const totalWeight = available.reduce((s, p) => s + p.weight, 0);
   const share = available.reduce((s, p) => s + p.weight * (p.value ?? 0), 0) / totalWeight;
   return {
@@ -36,8 +38,24 @@ export function scoreCategory<K extends string>(key: K, max: number, parts: Part
     points: round1(share * max * factor),
     max,
     available: true,
+    applicable: true,
     evidence: available.filter((p) => (p.value ?? 0) > 0 && p.evidence).map((p) => p.evidence!),
   };
+}
+
+/** A category the role is not judged on (farm for supports): no points, and no room for them either. */
+export function notApplicable<K extends string>(key: K, max: number): CategoryScore<K> {
+  return { key, points: 0, max, available: true, applicable: false, evidence: [] };
+}
+
+/**
+ * Points rescaled to 0–100 by the categories that apply to the role. Without this a support, who is
+ * never judged on farm, could reach only 80 and started 20 points behind every core. Categories that
+ * apply but lack data (unparsed replay) still count, the same for everyone.
+ */
+export function roleScale(categories: CategoryScore[]): number {
+  const applicable = sum(categories.filter((c) => c.applicable).map((c) => c.max));
+  return applicable > 0 ? sum(categories.map((c) => c.max)) / applicable : 1;
 }
 
 export const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -83,7 +101,7 @@ export function wardCount(p: OdPlayer): number | null {
   return obs === null && sen === null ? null : (obs ?? 0) + (sen ?? 0);
 }
 
-/** Splits a match into our team and theirs, with positions and direct opponents. */
+/** Splits a match into our team and theirs, with positions and direct (same position) opponents. */
 export function teams(match: OdMatch, ourTeamIsRadiant: boolean) {
   const ours = match.players.filter((p) => p.isRadiant === ourTeamIsRadiant);
   const theirs = match.players.filter((p) => p.isRadiant !== ourTeamIsRadiant);
@@ -91,6 +109,53 @@ export function teams(match: OdMatch, ourTeamIsRadiant: boolean) {
   const theirPos = assignPositions(theirs);
   const opponentOf = (p: OdPlayer) => theirs.find((e) => theirPos.get(e.player_slot) === ourPos.get(p.player_slot)) ?? null;
   return { ours, theirs, ourPos, opponentOf };
+}
+
+/** The lane stage is judged at this minute. */
+export const LANE_MINUTE = 10;
+
+/** "на 10-й хвилині лінія мала 5200 золота проти 6100 у Lion і Juggernaut" ("лінія мала" only for a duo). */
+export function laneFact(m: LaneMatchup, totals: [number, number], unit: string, heroName: (p: OdPlayer) => string): string {
+  const duo = m.allies.length > 1 ? 'лінія мала ' : '';
+  return `на ${LANE_MINUTE}-й хвилині ${duo}${totals[0]} ${unit} проти ${totals[1]} у ${m.enemies.map(heroName).join(' і ')}`;
+}
+
+/** Map lane (1 bottom, 2 middle, 3 top) of a player who laned rather than roamed or jungled. */
+export function mapLane(p: OdPlayer): number | null {
+  const lane = num(p.lane);
+  return lane !== null && lane >= 1 && lane <= 3 && !p.is_roaming ? lane : null;
+}
+
+export interface LaneMatchup {
+  /** Our players in that lane, the player included. */
+  allies: OdPlayer[];
+  enemies: OdPlayer[];
+  /** Lane totals [ours, theirs] at the minute; null when missing or the sides are uneven (1 vs 2). */
+  gold: [number, number] | null;
+  xp: [number, number] | null;
+}
+
+/**
+ * Who actually stood against whom in the player's lane. Lanes are geographic, so our safe lane meets
+ * their offlane: comparing position 1 with their position 1 would compare players who never met.
+ */
+export function laneMatchup(p: OdPlayer, ours: OdPlayer[], theirs: OdPlayer[], minute: number): LaneMatchup | null {
+  const lane = mapLane(p);
+  if (lane === null) return null;
+  const allies = ours.filter((x) => mapLane(x) === lane);
+  const enemies = theirs.filter((x) => mapLane(x) === lane);
+  const even = enemies.length > 0 && allies.length === enemies.length;
+  const total = (side: OdPlayer[], series: (x: OdPlayer) => number[] | null | undefined): number | null => {
+    const values = side.map((x) => at(series(x), minute));
+    return values.every((v) => v !== null) ? sum(values as number[]) : null;
+  };
+  const pair = (series: (x: OdPlayer) => number[] | null | undefined): [number, number] | null => {
+    if (!even) return null;
+    const mine = total(allies, series);
+    const theirsTotal = total(enemies, series);
+    return mine === null || theirsTotal === null ? null : [mine, theirsTotal];
+  };
+  return { allies, enemies, gold: pair((x) => x.gold_t), xp: pair((x) => x.xp_t) };
 }
 
 /** Minutes (end of a 2-minute window) where our gold lead changed by at least `delta` (negative = dropped). */
