@@ -83,7 +83,8 @@ async function main(): Promise<void> {
   const contextTracker = new KillContextTracker();
 
   // Match analysis (chat only): OpenDota stats → blame (loss) or MVP (win) scores → Gemini verdict (or built-in text).
-  const openDota = new OpenDotaClient();
+  // Hero stats, items and players' hero histories are cached for a day in data/cache/ (gitignored).
+  const openDota = new OpenDotaClient({ apiKey: config.analysis.openDotaApiKey, cacheDir: 'data/cache' });
   const analyzer = new MatchAnalyzer({
     openDota,
     writer: config.analysis.gemini ? new GeminiWriter(config.analysis.gemini) : null,
