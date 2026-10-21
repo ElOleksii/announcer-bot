@@ -3,6 +3,7 @@ import {
   DEATHS,
   DEWARDS,
   LANE_MINUTE,
+  THROW_DROP,
   WARDS,
   assignPositions,
   at,
@@ -66,7 +67,6 @@ const SUPPORT_DEATH_FACTOR = 0.6;
 const SUPPORT_LANE_FACTOR = 0.5;
 const CARRY_MITIGATION = 0.7;
 const LEAVER_MITIGATION = 0.5;
-const THROW_DROP = 5000;
 
 export type CategoryScore = Scored<CategoryKey>;
 

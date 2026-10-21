@@ -39,6 +39,8 @@ const teamfightPlayerSchema = z.looseObject({
   xp_delta: z.number().optional(),
   ability_uses: countsSchema.optional(),
   item_uses: countsSchema.optional(),
+  /** Units killed in the fight, by unit key. */
+  killed: countsSchema.optional(),
 });
 
 const teamfightSchema = z.looseObject({

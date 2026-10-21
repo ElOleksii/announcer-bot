@@ -9,6 +9,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { CATEGORY_MAX, computeBlame, type CategoryKey } from '../src/analysis/blame.js';
+import { buildContext } from '../src/analysis/context.js';
 import { MVP_CATEGORY_MAX, computeMvp, type MvpCategoryKey } from '../src/analysis/mvp.js';
 import { matchSchema, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
 import { LANE_MINUTE, assignPositions, avg, laneMatchup, mapLane } from '../src/analysis/scoring.js';
@@ -42,6 +43,25 @@ const rows: Row[] = [];
 const verdicts = { culprit: 0, 'behind-everywhere': 0, 'no-clear-culprit': 0 };
 /** Our lane totals divided by theirs at the lane minute, by the kind of lane our core played. */
 const laneRatios: Record<'safe' | 'mid', { gold: number[]; xp: number[] }> = { safe: { gold: [], xp: [] }, mid: { gold: [], xp: [] } };
+/** Per player and match, from the match context: how they died and which fights they were in. */
+interface ContextRow {
+  position: number;
+  won: boolean;
+  pickoffs: number;
+  fightDeaths: number;
+  firstInLostFight: number;
+  throwDeaths: number;
+  /** Fights they were alive for at the start, and how many of those they stayed out of. */
+  fightsAlive: number;
+  missedAlive: number;
+  /** The same for fights our team lost. */
+  lostAlive: number;
+  missedLost: number;
+}
+const contextRows: ContextRow[] = [];
+const fightTally = { fights: 0, even: 0, decided: 0, wonByWinner: 0 };
+const brackets = new Map<string, number>();
+const modes = new Map<string, number>();
 
 for (const match of matches) {
   for (const radiant of [true, false]) {
@@ -65,6 +85,38 @@ for (const match of matches) {
         culprit: blame.verdict.kind === 'culprit' && blame.verdict.slot === b.slot,
         isMvp: mvp.mvpSlots.includes(b.slot),
       });
+    }
+
+    const context = buildContext(match, radiant);
+    for (const p of context.ours) {
+      const deaths = context.deaths.filter((d) => d.slot === p.player_slot);
+      const alive = context.fights.filter((f) => f.players.get(p.player_slot)?.aliveAtStart);
+      contextRows.push({
+        position: context.positions.get(p.player_slot) ?? 5,
+        won,
+        pickoffs: deaths.filter((d) => d.kind === 'pickoff').length,
+        fightDeaths: deaths.filter((d) => d.kind === 'fight').length,
+        firstInLostFight: deaths.filter((d) => d.firstInLostFight).length,
+        throwDeaths: deaths.filter((d) => d.duringThrow).length,
+        fightsAlive: alive.length,
+        missedAlive: alive.filter((f) => !f.players.get(p.player_slot)!.present).length,
+        lostAlive: alive.filter((f) => f.outcome === 'lost').length,
+        missedLost: alive.filter((f) => f.outcome === 'lost' && !f.players.get(p.player_slot)!.present).length,
+      });
+    }
+    if (won) {
+      // Once per match, from the winner's side.
+      for (const f of context.fights) {
+        fightTally.fights++;
+        if (f.outcome === 'even') fightTally.even++;
+        else {
+          fightTally.decided++;
+          if (f.outcome === 'won') fightTally.wonByWinner++;
+        }
+      }
+      const bracket = context.bracket === null ? 'unknown' : String(context.bracket);
+      brackets.set(bracket, (brackets.get(bracket) ?? 0) + 1);
+      modes.set(context.mode, (modes.get(context.mode) ?? 0) + 1);
     }
 
     const ours = match.players.filter((p) => p.isRadiant === radiant);
@@ -154,3 +206,38 @@ console.table({
   'safe lane': { lanes: laneRatios.safe.gold.length, gold: r2(median(laneRatios.safe.gold)), xp: r2(median(laneRatios.safe.xp)) },
   mid: { lanes: laneRatios.mid.gold.length, gold: r2(median(laneRatios.mid.gold)), xp: r2(median(laneRatios.mid.xp)) },
 });
+
+console.log('Match context');
+console.table({
+  'game modes': Object.fromEntries(modes),
+  'rank brackets (1 Herald … 8 Immortal)': Object.fromEntries([...brackets].sort()),
+});
+console.table({
+  'fights per match': r1(fightTally.fights / losses),
+  'even fights (|gold swing| < 500)': share(fightTally.even, fightTally.fights),
+  'decided fights won by the team that won the game': share(fightTally.wonByWinner, fightTally.decided),
+});
+
+console.log('Deaths and fights per match, by position: losers (L) vs winners (W)');
+console.table(
+  Object.fromEntries(
+    POSITIONS.flatMap((pos) =>
+      [false, true].map((won) => {
+        const rs = contextRows.filter((r) => r.position === pos && r.won === won);
+        const rate = (part: (r: ContextRow) => number, whole: (r: ContextRow) => number) =>
+          `${Math.round((rs.reduce((s, r) => s + part(r), 0) / Math.max(rs.reduce((s, r) => s + whole(r), 0), 1)) * 100)}%`;
+        return [
+          `pos${pos} ${won ? 'W' : 'L'}`,
+          {
+            pickoffs: r1(avg(rs.map((r) => r.pickoffs))),
+            'fight deaths': r1(avg(rs.map((r) => r.fightDeaths))),
+            'first to die in a lost fight': r1(avg(rs.map((r) => r.firstInLostFight))),
+            'deaths during a throw': r1(avg(rs.map((r) => r.throwDeaths))),
+            'fights missed while alive': rate((r) => r.missedAlive, (r) => r.fightsAlive),
+            'lost fights missed while alive': rate((r) => r.missedLost, (r) => r.lostAlive),
+          },
+        ];
+      }),
+    ),
+  ),
+);

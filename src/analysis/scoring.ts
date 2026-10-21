@@ -155,6 +155,9 @@ export function laneMatchup(p: OdPlayer, ours: OdPlayer[], theirs: OdPlayer[], m
   return { allies, enemies, gold: pair((x) => x.gold_t), xp: pair((x) => x.xp_t) };
 }
 
+/** A drop of our gold lead this big within two minutes is a throw. */
+export const THROW_DROP = 5000;
+
 /** Minutes (end of a 2-minute window) where our gold lead changed by at least `delta` (negative = dropped). */
 export function swingMinutes(match: OdMatch, ourTeamIsRadiant: boolean, delta: number): number[] {
   const sign = ourTeamIsRadiant ? 1 : -1;
