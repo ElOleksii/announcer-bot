@@ -20,6 +20,8 @@ interface Step {
   /** Game time in seconds; drives the multikill window. */
   t: number;
   state?: string;
+  /** map.win_team; the simulated player is always on Radiant. */
+  winTeam?: 'radiant' | 'dire';
   spectating?: boolean;
   token?: string;
   raw?: unknown;
@@ -91,6 +93,14 @@ const scenarios: Record<string, Scenario> = {
     description: 'kill counter changes after the game ended',
     steps: [init(), { kills: 1, streak: 1, t: 620, state: POST_GAME, note: 'post-game (silent)' }],
   },
+  win: {
+    description: 'the match ends with a win → "victory" sound',
+    steps: [init(), { kills: 0, t: 2400, state: POST_GAME, winTeam: 'radiant', note: 'victory' }],
+  },
+  loss: {
+    description: 'the match ends with a loss → "defeat" sound',
+    steps: [init(), { kills: 0, t: 2400, state: POST_GAME, winTeam: 'dire', note: 'defeat' }],
+  },
   spectate: {
     description: 'spectator payloads are ignored',
     steps: [
@@ -124,6 +134,7 @@ function buildPayload(step: Step, matchId: string, token: string): unknown {
     game_time: step.t,
     clock_time: step.t - 90,
     game_state: step.state ?? 'DOTA_GAMERULES_STATE_GAME_IN_PROGRESS',
+    win_team: step.winTeam ?? 'none',
     paused: false,
   };
   const player = step.spectating
@@ -134,6 +145,7 @@ function buildPayload(step: Step, matchId: string, token: string): unknown {
     : {
         steamid: '76561198000000000',
         name: 'simulator',
+        team_name: 'radiant',
         activity: 'playing',
         kills: step.kills ?? 0,
         deaths: step.deaths ?? 0,

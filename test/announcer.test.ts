@@ -70,3 +70,39 @@ describe('Announcer', () => {
     expect(files()).toEqual(['line.mp3']);
   });
 });
+
+describe('Announcer.playMatchResult', () => {
+  const withSounds = (events: Record<string, SoundFile[]>, mode: AnnouncerMode = 'sounds') => {
+    const played: QueueItem[] = [];
+    const queue = { enqueue: (item: QueueItem) => played.push(item) } as unknown as PlaybackQueue;
+    const commentator = { comment: async () => null, say: async () => null, description: 'fake' } as unknown as Commentator;
+    const announcer = new Announcer({ picker: new SoundPicker<SoundFile>(events), queue, commentator, mode, logger: silent });
+    return { announcer, played };
+  };
+
+  it('plays "victory" on a win and "defeat" on a loss', () => {
+    const { announcer, played } = withSounds({
+      victory: [{ path: 'win.mp3', volume: 1 }],
+      defeat: [{ path: 'lose.mp3', volume: 0.5 }],
+    });
+    expect(announcer.playMatchResult('win')).toBe(true);
+    expect(announcer.playMatchResult('loss')).toBe(true);
+    expect(played).toEqual([
+      { file: 'win.mp3', volume: 1, label: 'victory' },
+      { file: 'lose.mp3', volume: 0.5, label: 'defeat' },
+    ]);
+  });
+
+  it('is silent without a configured file and never falls back to the kill sound', () => {
+    const { announcer, played } = withSounds({ kill: [{ path: 'kill.mp3', volume: 1 }] });
+    expect(announcer.playMatchResult('win')).toBe(false);
+    expect(announcer.playMatchResult('loss')).toBe(false);
+    expect(played).toEqual([]);
+  });
+
+  it.each(['commentator', 'both'] as const)('plays the sound file in %s mode too', (mode) => {
+    const { announcer, played } = withSounds({ victory: [{ path: 'win.mp3', volume: 1 }] }, mode);
+    expect(announcer.playMatchResult('win')).toBe(true);
+    expect(played.map((p) => p.file)).toEqual(['win.mp3']);
+  });
+});

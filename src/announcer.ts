@@ -3,7 +3,8 @@ import type { SoundPicker } from './audio/sound-picker.js';
 import type { Commentator } from './commentary/commentator.js';
 import type { KillContext } from './commentary/context.js';
 import type { SoundFile } from './config/sounds.js';
-import { describeEvent, soundChain, type GameEvent, type SoundKey } from './game/events.js';
+import type { MatchResult } from './analysis/analyzer.js';
+import { MATCH_RESULT_SOUNDS, describeEvent, soundChain, type GameEvent, type SoundKey } from './game/events.js';
 import type { Logger } from './logger.js';
 
 export const ANNOUNCER_MODES = ['sounds', 'commentator', 'both'] as const;
@@ -64,6 +65,16 @@ export class Announcer {
     }
     this.options.queue.enqueue({ file: sound.path, volume: sound.volume, label });
     return true;
+  }
+
+  /**
+   * Plays the victory/defeat sound at the end of a match, in every mode. Without a configured
+   * file this is a silent no-op, so matches don't produce a warning each time.
+   */
+  playMatchResult(result: MatchResult): boolean {
+    const key = MATCH_RESULT_SOUNDS[result];
+    if (!this.options.picker.keys().includes(key)) return false;
+    return this.playSound([key], key);
   }
 
   async onEvent(event: GameEvent, ctx: KillContext): Promise<void> {

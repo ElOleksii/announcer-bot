@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
-import { MULTIKILL_SOUNDS, type SoundKey } from '../game/events.js';
+import { MATCH_RESULT_SOUNDS, MULTIKILL_SOUNDS, type SoundKey } from '../game/events.js';
 import { ConfigError } from './env.js';
 
 /** 0 = mute, 1 = original, 2 = +6 dB. */
@@ -43,7 +43,15 @@ export interface SoundsConfig {
 
 /** Every key the announcer can emit with the given streak thresholds. */
 export function knownSoundKeys(streakThresholds: Record<number, SoundKey>): SoundKey[] {
-  return [...new Set(['kill', ...Object.values(MULTIKILL_SOUNDS), ...Object.values(streakThresholds), 'death'])];
+  return [
+    ...new Set([
+      'kill',
+      ...Object.values(MULTIKILL_SOUNDS),
+      ...Object.values(streakThresholds),
+      'death',
+      ...Object.values(MATCH_RESULT_SOUNDS),
+    ]),
+  ];
 }
 
 export function loadSoundsConfig(path: string): SoundsConfig {
