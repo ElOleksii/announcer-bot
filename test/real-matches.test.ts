@@ -109,7 +109,7 @@ describe('the rating on a real ranked match', () => {
   it("a support's deaths are judged against the share supports usually have, and good work still shows", () => {
     const pos5 = computeBlame(match, heroes, false).players.find((p) => p.position === 5)!;
     expect(category(pos5, 'survival').points).toBeGreaterThan(0);
-    expect(pos5.evidence).toContain('9 разів помер поодинці, поза файтами: 33% таких смертей команди (зазвичай 24% на позиції 5)');
+    expect(category(pos5, 'survival').evidence).toContain('9 разів помер поодинці, поза файтами: 33% таких смертей команди (зазвичай 24% на позиції 5)');
     expect(pos5.mitigations).toContain('10 вардів проти 2 у hero 100');
   });
 

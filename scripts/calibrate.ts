@@ -12,7 +12,8 @@ import { AREA_KEYS, BENCHMARK_MEDIAN, ROLE_SHARE } from '../src/analysis/areas/c
 import { computeBlame } from '../src/analysis/blame.js';
 import { buildContext } from '../src/analysis/context.js';
 import { computeMvp } from '../src/analysis/mvp.js';
-import { matchSchema, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
+import { OpenDotaClient, matchSchema, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
+import { NO_REFERENCE, type ReferenceData } from '../src/analysis/reference.js';
 import { LANE_MINUTE, assignPositions, avg, benchmarkPct, laneMatchup, mapLane, num, sum } from '../src/analysis/scoring.js';
 
 interface Row {
@@ -28,6 +29,14 @@ interface Row {
 
 const dir = resolve(process.argv[2] ?? 'data/matches');
 const heroes = new Map<number, HeroInfo>();
+// Current hero stats for the pick area and the draft line (one request, cached in data/cache/).
+// Matchups and players' hero histories are left out: the collected matches carry no real account ids.
+let ref: ReferenceData = NO_REFERENCE;
+try {
+  ref = { ...NO_REFERENCE, heroStats: await new OpenDotaClient({ cacheDir: 'data/cache' }).getHeroStats() };
+} catch (err) {
+  console.warn(`No hero stats (${(err as Error).message}): pick area and draft line skipped.`);
+}
 const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
 const matches: OdMatch[] = [];
 for (const file of files) {
@@ -41,6 +50,8 @@ if (matches.length === 0) {
 }
 
 const rows: Row[] = [];
+/** The draft line's expected chance against the real result, from both teams' sides. */
+const draftRows: Array<{ won: boolean; expected: number }> = [];
 const verdicts = { culprit: 0, 'behind-everywhere': 0, 'no-clear-culprit': 0 };
 /** Our lane totals divided by theirs at the lane minute, by the kind of lane our core played. */
 const laneRatios: Record<'safe' | 'mid', { gold: number[]; xp: number[] }> = { safe: { gold: [], xp: [] }, mid: { gold: [], xp: [] } };
@@ -67,8 +78,9 @@ const modes = new Map<string, number>();
 for (const match of matches) {
   for (const radiant of [true, false]) {
     // Both scores for both teams: a fair score should separate winners from losers.
-    const blame = computeBlame(match, heroes, radiant);
-    const mvp = computeMvp(match, heroes, radiant);
+    const blame = computeBlame(match, heroes, radiant, ref);
+    const mvp = computeMvp(match, heroes, radiant, ref);
+    if (blame.draft) draftRows.push({ won: match.radiant_win === radiant, expected: blame.draft.expected });
     const won = match.radiant_win === radiant;
     if (!won) {
       const key = blame.verdict.kind === 'culprit' ? 'culprit' : blame.verdict.reason;
@@ -292,3 +304,14 @@ console.table(
     ]),
   ),
 );
+
+if (draftRows.length) {
+  console.log('Draft line (hero strength only, no matchups): does it predict the result?');
+  const won = draftRows.filter((r) => r.won).map((r) => r.expected);
+  const lost = draftRows.filter((r) => !r.won).map((r) => r.expected);
+  console.table({
+    'avg expected, winners': `${Math.round(avg(won) * 1000) / 10}%`,
+    'avg expected, losers': `${Math.round(avg(lost) * 1000) / 10}%`,
+    'AUC (0.5 = predicts nothing)': r2(auc(won, lost)),
+  });
+}

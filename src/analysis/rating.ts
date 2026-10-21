@@ -1,16 +1,20 @@
 import { farm } from './areas/farm.js';
 import { fights } from './areas/fights.js';
+import { items } from './areas/items.js';
 import { lane } from './areas/lane.js';
 import { objectives } from './areas/objectives.js';
+import { pick } from './areas/pick.js';
 import { support } from './areas/support.js';
 import { survival } from './areas/survival.js';
 import { AREA_KEYS, type AreaKey, type AreaScore, type Fact, type RatingInput } from './areas/common.js';
 import { buildContext, type MatchContext } from './context.js';
+import { draftOutlook, type DraftOutlook } from './draft.js';
 import type { HeroInfo, OdMatch, OdPlayer } from './opendota.js';
+import { NO_REFERENCE, type ReferenceData } from './reference.js';
 import { isLeaver, num, round1, sum, swingMinutes } from './scoring.js';
 
 /**
- * One rating for wins and losses alike. Every player is rated in six areas (−1…+1, 0 = as
+ * One rating for wins and losses alike. Every player is rated in eight areas (−1…+1, 0 = as
  * expected); their role decides how much each area weighs. A loss is explained by what went wrong
  * (blame), a win by what went right (contribution), each partly offset by the other: the same
  * numbers and thresholds either way.
@@ -18,11 +22,11 @@ import { isLeaver, num, round1, sum, swingMinutes } from './scoring.js';
 
 /** How much each area weighs per position (1–5); areas without data drop out and the rest scale to 100. */
 export const ROLE_WEIGHTS: Record<number, Record<AreaKey, number>> = {
-  1: { lane: 15, farm: 25, fights: 18, survival: 15, objectives: 12, support: 0 },
-  2: { lane: 18, farm: 18, fights: 22, survival: 14, objectives: 10, support: 3 },
-  3: { lane: 15, farm: 10, fights: 25, survival: 8, objectives: 12, support: 15 },
-  4: { lane: 12, farm: 3, fights: 25, survival: 12, objectives: 3, support: 30 },
-  5: { lane: 12, farm: 0, fights: 18, survival: 12, objectives: 5, support: 38 },
+  1: { lane: 15, farm: 25, fights: 18, survival: 15, objectives: 12, support: 0, items: 10, pick: 5 },
+  2: { lane: 18, farm: 18, fights: 22, survival: 14, objectives: 10, support: 3, items: 10, pick: 5 },
+  3: { lane: 15, farm: 10, fights: 25, survival: 8, objectives: 12, support: 15, items: 10, pick: 5 },
+  4: { lane: 12, farm: 3, fights: 25, survival: 12, objectives: 3, support: 30, items: 10, pick: 5 },
+  5: { lane: 12, farm: 0, fights: 18, survival: 12, objectives: 5, support: 38, items: 10, pick: 5 },
 };
 
 export const AREA_LABELS: Record<AreaKey, string> = {
@@ -32,6 +36,8 @@ export const AREA_LABELS: Record<AreaKey, string> = {
   survival: 'виживання',
   objectives: 'об’єкти',
   support: 'підтримка',
+  items: 'предмети',
+  pick: 'пік',
 };
 
 /**
@@ -69,17 +75,20 @@ export interface PlayerRating {
 export interface TeamRating {
   context: MatchContext;
   players: PlayerRating[];
+  /** Context only: never part of anyone's score. */
+  draft: DraftOutlook | null;
   opponentOf(p: OdPlayer): OdPlayer | null;
 }
 
-const AREAS: Record<AreaKey, (p: OdPlayer, input: RatingInput) => AreaScore> = { lane, farm, fights, survival, objectives, support };
+const AREAS: Record<AreaKey, (p: OdPlayer, input: RatingInput) => AreaScore> = { lane, farm, fights, survival, objectives, support, items, pick };
 
-export function rateTeam(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean): TeamRating {
+export function rateTeam(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean, ref: ReferenceData = NO_REFERENCE): TeamRating {
   const context = buildContext(match, ourTeamIsRadiant);
   const position = (p: OdPlayer) => context.positions.get(p.player_slot) ?? 5;
   const opponentOf = (p: OdPlayer) => context.theirs.find((e) => position(e) === position(p)) ?? null;
   const input: RatingInput = {
     ctx: context,
+    ref,
     position,
     opponent: opponentOf,
     heroName: (p) => heroes.get(p.hero_id)?.localized_name ?? `hero ${p.hero_id}`,
@@ -87,7 +96,7 @@ export function rateTeam(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamI
     surges: swingMinutes(match, ourTeamIsRadiant, SURGE_GAIN),
   };
   const players = context.ours.map((p) => ratePlayer(p, input));
-  return { context, players, opponentOf };
+  return { context, players, opponentOf, draft: draftOutlook(context, ref) };
 }
 
 function ratePlayer(p: OdPlayer, input: RatingInput): PlayerRating {

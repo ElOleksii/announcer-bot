@@ -30,6 +30,8 @@ async function runJob(replies: Reply[], hint: Partial<MatchHint> = {}) {
       return new Response('{}');
     }
     if (href.endsWith('/heroes')) return new Response(JSON.stringify(fixture('opendota-heroes')));
+    // Hero stats, matchups and player histories: not part of the script.
+    if (!href.includes('/matches/')) return new Response('[]');
     const reply = replies[Math.min(matchCalls++, replies.length - 1)];
     if (reply === 'missing') return new Response('{}', { status: 404 });
     if (reply === 'error') return new Response('oops', { status: 500 });

@@ -1,11 +1,12 @@
 import type { MatchContext } from '../context.js';
 import type { OdPlayer } from '../opendota.js';
+import type { ReferenceData } from '../reference.js';
 import { ramp } from '../scoring.js';
 
-/** The six areas every player is rated in; the role decides how much each one weighs. */
-export type AreaKey = 'lane' | 'farm' | 'fights' | 'survival' | 'objectives' | 'support';
+/** The areas every player is rated in; the role decides how much each one weighs. */
+export type AreaKey = 'lane' | 'farm' | 'fights' | 'survival' | 'objectives' | 'support' | 'items' | 'pick';
 
-export const AREA_KEYS: readonly AreaKey[] = ['lane', 'farm', 'fights', 'survival', 'objectives', 'support'];
+export const AREA_KEYS: readonly AreaKey[] = ['lane', 'farm', 'fights', 'survival', 'objectives', 'support', 'items', 'pick'];
 
 export interface Part {
   weight: number;
@@ -36,6 +37,8 @@ export interface AreaScore {
 /** What an area needs besides the player: the match context and lookups into it. */
 export interface RatingInput {
   ctx: MatchContext;
+  /** Meta, matchups and hero histories loaded from outside the match; empty when unavailable. */
+  ref: ReferenceData;
   position(p: OdPlayer): number;
   /** The enemy on the same position. */
   opponent(p: OdPlayer): OdPlayer | null;

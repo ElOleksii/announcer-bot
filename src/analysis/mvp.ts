@@ -1,12 +1,14 @@
 import type { AreaKey } from './areas/common.js';
 import { categories } from './blame.js';
+import type { DraftOutlook } from './draft.js';
 import type { HeroInfo, OdMatch } from './opendota.js';
 import { AREA_LABELS, rateTeam } from './rating.js';
+import type { ReferenceData } from './reference.js';
 import type { CategoryScore } from './scoring.js';
 
 /**
  * Deterministic "who won us the game", the mirror of the blame from the same rating (rating.ts):
- * contribution is what went right, weighted by role, minus half of what went wrong (0–100);
+ * contribution is what went right, weighted by role, minus a share (OFFSET) of what went wrong (0–100);
  * a leaver gets nothing; MVP is the top score, shared when the top two are within MVP_SHARE_GAP.
  * The AI only phrases the result.
  */
@@ -43,10 +45,12 @@ export interface MvpReport {
   players: PlayerContribution[];
   /** One slot, or two when the top scores are within MVP_SHARE_GAP. */
   mvpSlots: number[];
+  /** Rough read of the draft, shown as context; null without hero stats. */
+  draft: DraftOutlook | null;
 }
 
-export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean): MvpReport {
-  const { context, players: ratings } = rateTeam(match, heroes, ourTeamIsRadiant);
+export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean, ref?: ReferenceData): MvpReport {
+  const { context, players: ratings, draft } = rateTeam(match, heroes, ourTeamIsRadiant, ref);
   const players: PlayerContribution[] = ratings.map((r) => ({
     slot: r.slot,
     hero: r.hero,
@@ -60,9 +64,6 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
   }));
 
   players.sort((a, b) => b.score - a.score || b.raw - a.raw);
-  const [first, second] = players;
-  const mvpSlots = first ? [first.slot] : [];
-  if (first && second && !second.leaver && first.score - second.score < MVP_SHARE_GAP) mvpSlots.push(second.slot);
 
   return {
     matchId: match.match_id,
@@ -70,6 +71,15 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
     ourTeam: ourTeamIsRadiant ? 'radiant' : 'dire',
     parsed: context.parsed,
     players,
-    mvpSlots,
+    mvpSlots: pickMvps(players),
+    draft,
   };
+}
+
+/** The top score, or the top two when they are within MVP_SHARE_GAP (a leaver never). Expects players sorted. */
+export function pickMvps(players: Array<Pick<PlayerContribution, 'slot' | 'score' | 'leaver'>>): number[] {
+  const [first, second] = players;
+  const slots = first ? [first.slot] : [];
+  if (first && second && !second.leaver && first.score - second.score < MVP_SHARE_GAP) slots.push(second.slot);
+  return slots;
 }
