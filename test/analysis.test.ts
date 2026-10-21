@@ -63,9 +63,11 @@ describe('computeBlame on a real parsed match', () => {
     }
   });
 
-  it('does not judge supports on farm', () => {
-    for (const p of report.players.filter((x) => x.position >= 4)) {
-      expect(p.categories.find((c) => c.key === 'farm')?.points).toBe(0);
+  it('judges supports on support work instead of farm', () => {
+    for (const p of report.players) {
+      const keys = p.categories.map((c) => c.key);
+      expect(keys).toContain(p.position >= 4 ? 'support' : 'farm');
+      expect(keys).not.toContain(p.position >= 4 ? 'farm' : 'support');
     }
   });
 
@@ -369,9 +371,11 @@ describe('computeMvp on a real parsed match (Radiant won)', () => {
     }
   });
 
-  it('does not reward supports for farm', () => {
-    for (const p of report.players.filter((x) => x.position >= 4)) {
-      expect(p.categories.find((c) => c.key === 'farm')?.points).toBe(0);
+  it('rewards supports for support work instead of farm', () => {
+    for (const p of report.players) {
+      const keys = p.categories.map((c) => c.key);
+      expect(keys).toContain(p.position >= 4 ? 'support' : 'farm');
+      expect(keys).not.toContain(p.position >= 4 ? 'farm' : 'support');
     }
   });
 

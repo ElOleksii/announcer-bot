@@ -1,15 +1,17 @@
 import type { HeroInfo, OdMatch, OdPlayer } from './opendota.js';
 import {
   DEATHS,
+  DEWARDS,
   KILLS,
   LANE_MINUTE,
+  WARDS,
   avg,
+  benchmarkPct,
+  dewardCount,
   isLeaver,
   laneFact,
   laneMatchup,
   mmss,
-  notApplicable,
-  roleScale,
   num,
   pct,
   plural,
@@ -27,18 +29,21 @@ import {
 /**
  * Deterministic "who won us the game" scoring, the mirror of the blame rules:
  * - everyone is judged against their role (position 1–5) and their direct opponent;
- * - six contribution categories add up to at most 100 points;
+ * - six contribution categories add up to at most 100 points; cores are rewarded for farm,
+ *   supports for support work (wards, dewards, stacks) instead;
  * - many deaths reduce the score, a leaver gets nothing;
  * - MVP is the top score; within 5 points of each other it is shared.
  * The AI only phrases the result.
  */
 
-export type MvpCategoryKey = 'fights' | 'lane' | 'farm' | 'contribution' | 'closing' | 'surge';
+/** `farm` applies to positions 1–3, `support` to 4–5: each player gets six categories. */
+export type MvpCategoryKey = 'fights' | 'lane' | 'farm' | 'support' | 'contribution' | 'closing' | 'surge';
 
 export const MVP_CATEGORY_MAX: Record<MvpCategoryKey, number> = {
   fights: 25,
   lane: 15,
   farm: 20,
+  support: 20,
   contribution: 20,
   closing: 10,
   surge: 10,
@@ -48,6 +53,7 @@ export const MVP_CATEGORY_LABELS: Record<MvpCategoryKey, string> = {
   fights: 'бійки',
   lane: 'лайн',
   farm: 'фарм',
+  support: 'підтримка',
   contribution: 'внесок',
   closing: 'кінець гри',
   surge: 'ривок',
@@ -63,7 +69,7 @@ export interface PlayerContribution {
   slot: number;
   hero: string;
   position: number;
-  /** Sum of categories, rescaled to 0–100 for the role (see roleScale), before modifiers. */
+  /** Sum of categories before modifiers. */
   raw: number;
   /** Final score 0–100. */
   score: number;
@@ -133,23 +139,54 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
       support ? SUPPORT_LANE_FACTOR : 1,
     );
 
-    // Farm (cores only), ahead of the direct opponent.
-    const farm = support
-      ? notApplicable('farm', MVP_CATEGORY_MAX.farm)
-      : cat('farm', [
-          {
-            weight: 0.6,
-            value: opp ? ramp((p.gold_per_min - opp.gold_per_min) / Math.max(opp.gold_per_min, 1), 0.1, 0.45) : null,
-            evidence: `GPM ${p.gold_per_min} проти ${opp?.gold_per_min} у ${oppName}`,
-          },
-          {
-            weight: 0.4,
-            value: opp ? ramp((p.xp_per_min - opp.xp_per_min) / Math.max(opp.xp_per_min, 1), 0.1, 0.45) : null,
-            evidence: `XPM ${p.xp_per_min} проти ${opp?.xp_per_min} у ${oppName}`,
-          },
-        ]);
+    // Farm for cores; support work (vision, stacks) for supports, ahead of the enemy on the same position.
+    let farmOrSupport: CategoryScore<MvpCategoryKey>;
+    if (!support) {
+      farmOrSupport = cat('farm', [
+        {
+          weight: 0.6,
+          value: opp ? ramp((p.gold_per_min - opp.gold_per_min) / Math.max(opp.gold_per_min, 1), 0.1, 0.45) : null,
+          evidence: `GPM ${p.gold_per_min} проти ${opp?.gold_per_min} у ${oppName}`,
+        },
+        {
+          weight: 0.4,
+          value: opp ? ramp((p.xp_per_min - opp.xp_per_min) / Math.max(opp.xp_per_min, 1), 0.1, 0.45) : null,
+          evidence: `XPM ${p.xp_per_min} проти ${opp?.xp_per_min} у ${oppName}`,
+        },
+      ]);
+    } else {
+      const wards = wardCount(p);
+      const oppWards = opp ? wardCount(opp) : null;
+      const dewards = dewardCount(p);
+      const oppDewards = opp ? dewardCount(opp) : null;
+      const stacks = num(p.camps_stacked);
+      const oppStacks = opp ? num(opp.camps_stacked) : null;
+      farmOrSupport = cat('support', [
+        {
+          weight: 0.35,
+          value: wards === null || oppWards === null ? null : ramp((wards - oppWards) / Math.max(oppWards, 1), 0.2, 0.7),
+          evidence: `${plural(wards ?? 0, WARDS)} проти ${oppWards} у ${oppName}`,
+        },
+        {
+          weight: 0.2,
+          value: dewards === null || oppDewards === null ? null : ramp(dewards - oppDewards, 1, 4),
+          evidence: `${plural(dewards ?? 0, DEWARDS)} проти ${oppDewards} у ${oppName}`,
+        },
+        {
+          weight: 0.15,
+          value: stacks === null || oppStacks === null ? null : ramp(stacks - oppStacks, 1, 4),
+          evidence: `${plural(stacks ?? 0, ['стак', 'стаки', 'стаків'])} кемпів проти ${oppStacks} у ${oppName}`,
+        },
+        // Levels, not gold: a support's gold goes into wards, and taking farm from cores is no merit.
+        {
+          weight: 0.3,
+          value: opp ? ramp((p.xp_per_min - opp.xp_per_min) / Math.max(opp.xp_per_min, 1), 0.1, 0.45) : null,
+          evidence: `XPM ${p.xp_per_min} проти ${opp?.xp_per_min} у ${oppName}`,
+        },
+      ]);
+    }
 
-    // Contribution: damage and fights for cores; fights, vision and control for supports.
+    // Contribution: damage and fights for cores; fights, damage for the hero and control for supports.
     const tp = num(p.teamfight_participation);
     const tpPart: Part = {
       weight: 0.4,
@@ -176,19 +213,19 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
         },
       ]);
     } else {
-      const wards = wardCount(p);
-      const oppWards = opp ? wardCount(opp) : null;
+      // Hero damage against the same hero in other games: a support's damage share depends on the hero.
+      const dmgPct = benchmarkPct(p, 'hero_damage_per_min');
       const stuns = num(p.stuns);
       const oppStuns = opp ? num(opp.stuns) : null;
       contribution = cat('contribution', [
         tpPart,
         {
-          weight: 0.4,
-          value: wards === null || oppWards === null ? null : ramp((wards - oppWards) / Math.max(oppWards, 1), 0.2, 0.7),
-          evidence: `${plural(wards ?? 0, ['вард', 'варди', 'вардів'])} проти ${oppWards} у ${oppName}`,
+          weight: 0.3,
+          value: dmgPct === null ? null : ramp(dmgPct, 0.5, 0.85),
+          evidence: `урон по героях кращий, ніж у ${pct(dmgPct ?? 0)}% ігор на цьому героєві`,
         },
         {
-          weight: 0.2,
+          weight: 0.3,
           value: stuns === null || oppStuns === null ? null : ramp((stuns - oppStuns) / Math.max(oppStuns, 1), 0.3, 0.8),
           evidence: `${Math.round(stuns ?? 0)} с стану проти ${Math.round(oppStuns ?? 0)} у ${oppName}`,
         },
@@ -224,8 +261,8 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
       surge = cat('surge', []);
     }
 
-    const categories = [fights, lane, farm, contribution, closing, surge];
-    const raw = round1(sum(categories.map((c) => c.points)) * roleScale(categories));
+    const categories = [fights, lane, farmOrSupport, contribution, closing, surge];
+    const raw = round1(sum(categories.map((c) => c.points)));
 
     const leaver = isLeaver(p);
     let factor = 1;

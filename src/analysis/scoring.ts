@@ -8,8 +8,6 @@ export interface CategoryScore<K extends string = string> {
   max: number;
   /** false when the match lacks the data for this category (e.g. not parsed). */
   available: boolean;
-  /** false when the category does not apply to the player's role at all (farm for supports). */
-  applicable: boolean;
   /** Facts with numbers that explain the points. */
   evidence: string[];
 }
@@ -30,7 +28,7 @@ export function ramp(x: number, lo: number, hi: number): number {
 /** Weighted average of the available parts, scaled to `max` points. Missing parts don't count. */
 export function scoreCategory<K extends string>(key: K, max: number, parts: Part[], factor = 1): CategoryScore<K> {
   const available = parts.filter((p) => p.value !== null);
-  if (available.length === 0) return { key, points: 0, max, available: false, applicable: true, evidence: [] };
+  if (available.length === 0) return { key, points: 0, max, available: false, evidence: [] };
   const totalWeight = available.reduce((s, p) => s + p.weight, 0);
   const share = available.reduce((s, p) => s + p.weight * (p.value ?? 0), 0) / totalWeight;
   return {
@@ -38,24 +36,8 @@ export function scoreCategory<K extends string>(key: K, max: number, parts: Part
     points: round1(share * max * factor),
     max,
     available: true,
-    applicable: true,
     evidence: available.filter((p) => (p.value ?? 0) > 0 && p.evidence).map((p) => p.evidence!),
   };
-}
-
-/** A category the role is not judged on (farm for supports): no points, and no room for them either. */
-export function notApplicable<K extends string>(key: K, max: number): CategoryScore<K> {
-  return { key, points: 0, max, available: true, applicable: false, evidence: [] };
-}
-
-/**
- * Points rescaled to 0–100 by the categories that apply to the role. Without this a support, who is
- * never judged on farm, could reach only 80 and started 20 points behind every core. Categories that
- * apply but lack data (unparsed replay) still count, the same for everyone.
- */
-export function roleScale(categories: CategoryScore[]): number {
-  const applicable = sum(categories.filter((c) => c.applicable).map((c) => c.max));
-  return applicable > 0 ? sum(categories.map((c) => c.max)) / applicable : 1;
 }
 
 export const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -94,6 +76,21 @@ export function isLeaver(p: OdPlayer): boolean {
 export function at(series: number[] | null | undefined, minute: number): number | null {
   return series && series.length > minute ? (series[minute] ?? null) : null;
 }
+
+/** Enemy wards destroyed (observers and sentries). */
+export function dewardCount(p: OdPlayer): number | null {
+  const obs = num(p.observer_kills);
+  const sen = num(p.sentry_kills);
+  return obs === null && sen === null ? null : (obs ?? 0) + (sen ?? 0);
+}
+
+/** 0..1: where this game ranks among recent public games on the same hero (OpenDota benchmarks). */
+export function benchmarkPct(p: OdPlayer, key: string): number | null {
+  return num(p.benchmarks?.[key]?.pct);
+}
+
+export const WARDS = ['вард', 'варди', 'вардів'] as const;
+export const DEWARDS = ['дівард', 'діварди', 'дівардів'] as const;
 
 export function wardCount(p: OdPlayer): number | null {
   const obs = num(p.obs_placed);

@@ -1,6 +1,5 @@
 import { CATEGORY_LABELS, type BlameReport, type PlayerBlame } from './blame.js';
 import { MVP_CATEGORY_LABELS, MVP_SHARE_GAP, type MvpReport, type PlayerContribution } from './mvp.js';
-import { roleScale, type CategoryScore } from './scoring.js';
 
 export const ANALYSIS_TONES = ['harsh', 'light'] as const;
 export type AnalysisTone = (typeof ANALYSIS_TONES)[number];
@@ -40,16 +39,9 @@ export function formatChatReport(report: BlameReport, verdictText?: string): str
     if (p.mitigations.length) lines.push(`       + ${p.mitigations.join(', ')}`);
   }
   lines.push('```');
-  const note = roleScaleNote(report.players);
-  if (note) lines.push(note);
   return lines.join('\n');
 }
 
-/** Supports' category points don't add up to their score (rescaled, see roleScale); say why under the table. */
-function roleScaleNote(players: Array<{ score: number; categories: CategoryScore[] }>): string | null {
-  const scale = players.filter((p) => p.score > 0).map((p) => roleScale(p.categories)).find((s) => s > 1);
-  return scale ? `_Саппортам фарм не рахується, тому їхні бали перераховано на 100 (×${Math.round(scale * 100) / 100})._` : null;
-}
 
 export function verdictSystemPrompt(tone: AnalysisTone): string {
   const style =
@@ -140,8 +132,6 @@ export function formatMvpChat(report: MvpReport, verdictText?: string): string {
     if (p.modifiers.length) lines.push(`       − ${p.modifiers.join(', ')}`);
   }
   lines.push('```');
-  const note = roleScaleNote(report.players);
-  if (note) lines.push(note);
   return lines.join('\n');
 }
 

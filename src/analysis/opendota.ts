@@ -35,6 +35,11 @@ const playerSchema = z.looseObject({
   obs_placed: z.number().nullable().optional(),
   sen_placed: z.number().nullable().optional(),
   stuns: z.number().nullable().optional(),
+  observer_kills: z.number().nullable().optional(),
+  sentry_kills: z.number().nullable().optional(),
+  camps_stacked: z.number().nullable().optional(),
+  /** Percentiles against recent public games on the same hero, e.g. benchmarks.hero_damage_per_min.pct. */
+  benchmarks: z.record(z.string(), z.looseObject({ pct: z.number().nullable().optional() })).nullable().optional(),
   life_state_dead: z.number().nullable().optional(),
   leaver_status: z.number().nullable().optional(),
   abandons: z.number().nullable().optional(),

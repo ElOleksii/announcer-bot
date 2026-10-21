@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { computeBlame } from '../src/analysis/blame.js';
 import { computeMvp } from '../src/analysis/mvp.js';
 import { matchSchema, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
-import { formatMvpChat } from '../src/analysis/report.js';
 import { LANE_MINUTE, laneMatchup, mapLane } from '../src/analysis/scoring.js';
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')) as unknown;
@@ -97,31 +96,33 @@ describe('real parsed ranked All Pick match (Radiant won)', () => {
   });
 });
 
-describe('one 0–100 scale for every role', () => {
+describe('supports are judged on support work, not farm', () => {
   const match = load('opendota-ranked-parsed');
-  const sumPoints = (cats: Array<{ points: number }>) => cats.reduce((s, c) => s + c.points, 0);
+  const supportCategory = (p: { categories: Array<{ key: string; points: number; evidence: string[] }> }) =>
+    p.categories.find((c) => c.key === 'support')!;
 
-  it.each([
-    ['blame', computeBlame(match, heroes, false).players],
-    ['MVP', computeMvp(match, heroes, true).players],
-  ] as const)('%s: supports are rescaled by 100/80 because farm does not apply, cores are not', (_name, players) => {
-    for (const p of players) {
-      const farm = p.categories.find((c) => c.key === 'farm')!;
-      expect(farm.applicable).toBe(p.position <= 3);
-      expect(p.raw).toBeCloseTo(sumPoints(p.categories) * (p.position >= 4 ? 100 / 80 : 1), 0);
-    }
-  });
-
-  it('a support with the same category points as a core gets the higher score', () => {
+  it('a support can be MVP: Radiant pos4 out-warded and out-levelled the enemy pos4', () => {
     const report = computeMvp(match, heroes, true);
-    const support = report.players.find((p) => p.position === 5)!;
-    expect(support.score).toBeGreaterThan(sumPoints(support.categories));
+    const pos4 = report.players.find((p) => p.position === 4)!;
+    expect(report.mvpSlots).toContain(pos4.slot);
+    const support = supportCategory(pos4);
+    expect(support.points).toBeGreaterThan(10);
+    expect(support.evidence).toEqual(expect.arrayContaining(['18 вардів проти 0 у hero 9', 'XPM 630 проти 80 у hero 9']));
   });
 
-  it('explains the rescaling under the chat table', () => {
-    const text = formatMvpChat(computeMvp(match, heroes, true));
-    expect(text).toContain('Саппортам фарм не рахується, тому їхні бали перераховано на 100 (×1.25)');
-    expect(text.indexOf('×1.25')).toBeGreaterThan(text.lastIndexOf('```'));
+  it('a support is blamed for being under-levelled even with more wards than the enemy support', () => {
+    const pos5 = computeBlame(match, heroes, false).players.find((p) => p.position === 5)!;
+    const support = supportCategory(pos5);
+    expect(support.points).toBeGreaterThan(0);
+    expect(support.evidence).toEqual(['XPM 449 проти 667 у hero 100']);
+  });
+
+  it("judges a support's hero damage against the same hero in other games", () => {
+    const copy = load('opendota-ranked-parsed');
+    const pos5 = copy.players.find((p) => !p.isRadiant && p.position_est === 5)!;
+    pos5.benchmarks = { ...pos5.benchmarks, hero_damage_per_min: { pct: 0.1 } };
+    const blamed = computeBlame(copy, heroes, false).players.find((p) => p.position === 5)!;
+    expect(blamed.categories.find((c) => c.key === 'contribution')!.evidence).toContain('урон по героях кращий лише за 10% ігор на цьому героєві');
   });
 });
 
