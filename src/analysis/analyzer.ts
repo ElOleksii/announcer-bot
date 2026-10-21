@@ -138,12 +138,18 @@ const POST_GAME = 'DOTA_GAMERULES_STATE_POST_GAME';
  * Watches GSI for the end of a match. Remembers the last match for /analyze and reports a loss
  * exactly once per match id.
  */
+export type MatchResult = 'win' | 'loss';
+
+export interface FinishedMatch extends MatchHint {
+  result: MatchResult;
+}
+
 export class MatchEndWatcher {
   private last: MatchHint | null = null;
   private reported = new Set<string>();
 
-  /** Returns a hint when this payload is the first one showing the match result (win or loss). */
-  observe(payload: GsiPayload): MatchHint | null {
+  /** Returns the match and its result when this payload is the first one showing it (win or loss). */
+  observe(payload: GsiPayload): FinishedMatch | null {
     const matchId = payload.map?.matchid;
     if (!matchId || matchId === '0') return null;
 
@@ -162,10 +168,10 @@ export class MatchEndWatcher {
     if (payload.map?.game_state !== POST_GAME || this.reported.has(matchId)) return null;
     const winner = teamName(raw.map?.win_team);
     const ours = this.last?.matchId === matchId ? this.last.team : null;
-    if (!winner || !ours) return null;
+    if (!winner || !ours || !this.last) return null;
 
     this.reported.add(matchId);
-    return this.last;
+    return { ...this.last, result: winner === ours ? 'win' : 'loss' };
   }
 
   lastMatch(): MatchHint | null {

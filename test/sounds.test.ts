@@ -112,3 +112,11 @@ describe('loadSoundsConfig', () => {
     expect(knownSoundKeys(config.streakThresholds).length).toBeLessThanOrEqual(25); // Discord choice limit
   });
 });
+
+describe('match result events', () => {
+  it('victory and defeat are known events (they show up in /test once configured)', () => {
+    const keys = knownSoundKeys({});
+    expect(keys).toContain('victory');
+    expect(keys).toContain('defeat');
+  });
+});

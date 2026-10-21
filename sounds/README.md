@@ -24,8 +24,16 @@ Events without a file of their own fall back to the `kill` sound (multikills and
 | `double_kill`, `triple_kill`, `ultra_kill`, `rampage` | 2/3/4/5+ kills chained within `MULTIKILL_WINDOW_MS` of game time. A jump of N kills in one update counts as N kills. |
 | keys from `streaks` | `kill_streak` reaches that number (default: `killing_spree` at 3 … `beyond_godlike` at 10) |
 | `death` | you died. Plays only with `ANNOUNCE_DEATHS=true`. |
+| `victory` | your team won the match (once, when Dota shows the result) |
+| `defeat` | your team lost the match |
 
 Only one sound plays per update, by priority: multikill, then streak, then kill.
+`victory` and `defeat` play in every announcer mode and never fall back to the `kill` sound: without a file they stay silent.
+
+```json
+"victory": ["victory_1.mp3"],
+"defeat": ["defeat_1.mp3"]
+```
 
 ## Volume
 

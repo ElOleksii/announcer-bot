@@ -307,14 +307,18 @@ describe('MatchEndWatcher', () => {
     const watcher = new MatchEndWatcher();
     expect(watcher.observe(gsi('DOTA_GAMERULES_STATE_GAME_IN_PROGRESS'))).toBeNull();
     const hint = watcher.observe(gsi('DOTA_GAMERULES_STATE_POST_GAME', 'dire'));
-    expect(hint).toEqual({ matchId: '777', accountId: 39734272, heroId: 1, team: 'radiant' });
+    expect(hint).toEqual({ matchId: '777', accountId: 39734272, heroId: 1, team: 'radiant', result: 'loss' });
     expect(watcher.observe(gsi('DOTA_GAMERULES_STATE_POST_GAME', 'dire'))).toBeNull();
   });
 
   it('reports wins too (for the MVP analysis) and remembers the match for /analyze', () => {
     const watcher = new MatchEndWatcher();
-    expect(watcher.observe(gsi('DOTA_GAMERULES_STATE_POST_GAME', 'radiant'))?.matchId).toBe('777');
+    const finished = watcher.observe(gsi('DOTA_GAMERULES_STATE_POST_GAME', 'radiant'));
+    expect(finished?.matchId).toBe('777');
+    expect(finished?.result).toBe('win');
     expect(watcher.lastMatch()?.matchId).toBe('777');
+    // lastMatch() stays a plain hint; the result belongs to the end-of-match report only.
+    expect(watcher.lastMatch()).not.toHaveProperty('result');
   });
 
   it('waits until the winner is known', () => {

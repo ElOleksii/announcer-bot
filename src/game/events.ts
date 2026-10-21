@@ -10,6 +10,12 @@ export const MULTIKILL_SOUNDS = {
 
 export type MultikillCount = keyof typeof MULTIKILL_SOUNDS;
 
+/** Played once when the match ends; no fallback, silent when not configured. */
+export const MATCH_RESULT_SOUNDS = {
+  win: 'victory',
+  loss: 'defeat',
+} as const satisfies Record<'win' | 'loss', SoundKey>;
+
 export type GameEvent =
   | { kind: 'kill'; sound: 'kill' }
   | { kind: 'multikill'; count: MultikillCount; sound: SoundKey }

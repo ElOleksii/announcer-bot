@@ -16,7 +16,7 @@ import { knownSoundKeys, loadSoundsConfig } from './config/sounds.js';
 import { createDiscordBot, type DiscordBot } from './discord/client.js';
 import type { AnalyzeOutcome } from './discord/commands.js';
 import { VoiceManager } from './discord/voice.js';
-import { describeEvent } from './game/events.js';
+import { MATCH_RESULT_SOUNDS, describeEvent } from './game/events.js';
 import { KillTracker } from './game/kill-tracker.js';
 import { PayloadDump } from './gsi/dump.js';
 import { createGsiServer, startGsiServer, GSI_HOST } from './gsi/server.js';
@@ -39,7 +39,9 @@ async function main(): Promise<void> {
   const logger = createLogger(config.logLevel);
   logger.info({ mode: config.mode }, 'starting Dota 2 kill announcer');
   for (const warning of sounds.warnings) logger.warn(warning);
-  const fallingBack = sounds.withoutSound.filter((key) => key !== 'kill' && key !== 'death');
+  // Only multikills and streaks fall back to "kill"; kill, death and the match result do not.
+  const noFallback = new Set<string>(['kill', 'death', ...Object.values(MATCH_RESULT_SOUNDS)]);
+  const fallingBack = sounds.withoutSound.filter((key) => !noFallback.has(key));
   if (sounds.withoutSound.includes('kill')) {
     logger.warn('no playable file for "kill": plain kills will be silent');
   } else if (fallingBack.length > 0) {
@@ -123,6 +125,10 @@ async function main(): Promise<void> {
       status.recordPayload(payload, now);
       dump?.record(payload, now);
       const finishedMatch = matchWatcher.observe(payload);
+      if (finishedMatch) {
+        const played = announcer.playMatchResult(finishedMatch.result);
+        gameLog.info({ matchId: finishedMatch.matchId, result: finishedMatch.result, sound: played }, 'match ended');
+      }
       if (finishedMatch && autoAnalyze) {
         analysisLog.info({ matchId: finishedMatch.matchId }, 'match finished, starting analysis');
         startJob(finishedMatch, config.analysis.tone, bot ? bot.createChannelSink(config.analysis.channelId) : logSink());
