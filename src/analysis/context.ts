@@ -60,9 +60,13 @@ export interface Death {
 export interface MatchContext {
   ourTeamIsRadiant: boolean;
   won: boolean | null;
+  /** Game length in seconds. */
+  duration: number;
   mode: GameMode;
   /** OpenDota parsed the replay: fights, logs and per-minute data exist. */
   parsed: boolean;
+  /** The team gold lead per minute is known (throws and surges can be found). */
+  hasGoldGraph: boolean;
   /** 1 Herald … 8 Immortal, from the average rank of players who show one; null when nobody does. */
   bracket: number | null;
   ours: OdPlayer[];
@@ -164,8 +168,10 @@ export function buildContext(match: OdMatch, ourTeamIsRadiant: boolean): MatchCo
   return {
     ourTeamIsRadiant,
     won: match.radiant_win == null ? null : match.radiant_win === ourTeamIsRadiant,
+    duration: match.duration,
     mode: gameMode(match),
     parsed: match.version != null,
+    hasGoldGraph: match.radiant_gold_adv != null,
     bracket: rankBracket(match.players),
     ours,
     theirs,
