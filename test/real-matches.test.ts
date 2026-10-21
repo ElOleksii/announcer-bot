@@ -41,9 +41,9 @@ describe('lane matchups', () => {
       expect(lane.points).toBeGreaterThan(0);
       expect(lane.evidence.join(' ')).toMatch(/лінія мала \d+ золота проти \d+ у (Kez і Hoodwink|Hoodwink і Kez)/);
     }
-    // The support's share is halved.
-    const [core, support] = [129, 131].map((s) => report.players.find((p) => p.slot === s)!.categories.find((c) => c.key === 'lane')!.points);
-    expect(support).toBeCloseTo(core! / 2, 0);
+    // One lane result for the duo; each loses points by their role's lane weight.
+    const [core, support] = [129, 131].map((s) => report.players.find((p) => p.slot === s)!.categories.find((c) => c.key === 'lane')!);
+    expect(core!.points / core!.max).toBeCloseTo(support!.points / support!.max, 2);
   });
 });
 
@@ -96,33 +96,29 @@ describe('real parsed ranked All Pick match (Radiant won)', () => {
   });
 });
 
-describe('supports are judged on support work, not farm', () => {
+describe('the rating on a real ranked match', () => {
   const match = load('opendota-ranked-parsed');
-  const supportCategory = (p: { categories: Array<{ key: string; points: number; evidence: string[] }> }) =>
-    p.categories.find((c) => c.key === 'support')!;
+  const category = (p: { categories: Array<{ key: string; points: number; evidence: string[] }> }, key: string) => p.categories.find((c) => c.key === key)!;
 
-  it('a support can be MVP: Radiant pos4 out-warded and out-levelled the enemy pos4', () => {
-    const report = computeMvp(match, heroes, true);
-    const pos4 = report.players.find((p) => p.position === 4)!;
-    expect(report.mvpSlots).toContain(pos4.slot);
-    const support = supportCategory(pos4);
-    expect(support.points).toBeGreaterThan(10);
-    expect(support.evidence).toEqual(expect.arrayContaining(['18 вардів проти 0 у hero 9', 'XPM 630 проти 80 у hero 9']));
+  it('credits support work: Radiant pos4 out-warded the enemy pos4', () => {
+    const pos4 = computeMvp(match, heroes, true).players.find((p) => p.position === 4)!;
+    expect(category(pos4, 'support').points).toBeGreaterThan(10);
+    expect(category(pos4, 'support').evidence).toContain('18 вардів проти 0 у hero 9');
   });
 
-  it('a support is blamed for being under-levelled even with more wards than the enemy support', () => {
+  it("a support's deaths are judged against the share supports usually have, and good work still shows", () => {
     const pos5 = computeBlame(match, heroes, false).players.find((p) => p.position === 5)!;
-    const support = supportCategory(pos5);
-    expect(support.points).toBeGreaterThan(0);
-    expect(support.evidence).toEqual(['XPM 449 проти 667 у hero 100']);
+    expect(category(pos5, 'survival').points).toBeGreaterThan(0);
+    expect(pos5.evidence).toContain('9 разів помер поодинці, поза файтами: 33% таких смертей команди (зазвичай 24% на позиції 5)');
+    expect(pos5.mitigations).toContain('10 вардів проти 2 у hero 100');
   });
 
-  it("judges a support's hero damage against the same hero in other games", () => {
+  it('judges hero damage against the same hero in other games, for every role', () => {
     const copy = load('opendota-ranked-parsed');
     const pos5 = copy.players.find((p) => !p.isRadiant && p.position_est === 5)!;
     pos5.benchmarks = { ...pos5.benchmarks, hero_damage_per_min: { pct: 0.1 } };
     const blamed = computeBlame(copy, heroes, false).players.find((p) => p.position === 5)!;
-    expect(blamed.categories.find((c) => c.key === 'contribution')!.evidence).toContain('урон по героях кращий лише за 10% ігор на цьому героєві');
+    expect(category(blamed, 'fights').evidence).toContain('урон по героях: гірше, ніж у 90% ігор на цьому героєві');
   });
 });
 

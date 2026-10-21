@@ -1,43 +1,22 @@
 import type { OdMatch, OdPlayer } from './opendota.js';
 
-/** Shared building blocks for the blame (loss) and MVP (win) scoring. */
+/** Shared building blocks for the rating, the match context and the reports. */
 
+/** One row of the chat table: an area's points out of what it can move for the player. */
 export interface CategoryScore<K extends string = string> {
   key: K;
   points: number;
   max: number;
-  /** false when the match lacks the data for this category (e.g. not parsed). */
+  /** false when the match lacks the data for this area (e.g. not parsed). */
   available: boolean;
   /** Facts with numbers that explain the points. */
   evidence: string[];
-}
-
-export interface Part {
-  weight: number;
-  /** 0..1, or null when the data is missing. */
-  value: number | null;
-  evidence?: string;
 }
 
 /** 0 below `lo`, 1 above `hi`, linear in between. */
 export function ramp(x: number, lo: number, hi: number): number {
   if (!Number.isFinite(x)) return 0;
   return Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
-}
-
-/** Weighted average of the available parts, scaled to `max` points. Missing parts don't count. */
-export function scoreCategory<K extends string>(key: K, max: number, parts: Part[], factor = 1): CategoryScore<K> {
-  const available = parts.filter((p) => p.value !== null);
-  if (available.length === 0) return { key, points: 0, max, available: false, evidence: [] };
-  const totalWeight = available.reduce((s, p) => s + p.weight, 0);
-  const share = available.reduce((s, p) => s + p.weight * (p.value ?? 0), 0) / totalWeight;
-  return {
-    key,
-    points: round1(share * max * factor),
-    max,
-    available: true,
-    evidence: available.filter((p) => (p.value ?? 0) > 0 && p.evidence).map((p) => p.evidence!),
-  };
 }
 
 export const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -96,16 +75,6 @@ export function wardCount(p: OdPlayer): number | null {
   const obs = num(p.obs_placed);
   const sen = num(p.sen_placed);
   return obs === null && sen === null ? null : (obs ?? 0) + (sen ?? 0);
-}
-
-/** Splits a match into our team and theirs, with positions and direct (same position) opponents. */
-export function teams(match: OdMatch, ourTeamIsRadiant: boolean) {
-  const ours = match.players.filter((p) => p.isRadiant === ourTeamIsRadiant);
-  const theirs = match.players.filter((p) => p.isRadiant !== ourTeamIsRadiant);
-  const ourPos = assignPositions(ours);
-  const theirPos = assignPositions(theirs);
-  const opponentOf = (p: OdPlayer) => theirs.find((e) => theirPos.get(e.player_slot) === ourPos.get(p.player_slot)) ?? null;
-  return { ours, theirs, ourPos, opponentOf };
 }
 
 /** The lane stage is judged at this minute. */

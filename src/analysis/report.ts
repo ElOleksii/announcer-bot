@@ -25,7 +25,7 @@ export function formatChatReport(report: BlameReport, verdictText?: string): str
     lines.push('🤝 **Винні всі:** до 15-ї хвилини програвали по всіх лініях.');
   } else lines.push('🤝 **Винні всі:** явного лідера за балами немає.');
 
-  if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн, троу та кінець гри не враховано._');
+  if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн і частину виживання не враховано._');
   if (verdictText) lines.push(`> ${verdictText}`);
 
   lines.push('```');
@@ -118,7 +118,7 @@ export function formatMvpChat(report: MvpReport, verdictText?: string): string {
   const top = mvps(report);
   if (top.length === 2) lines.push(`🏆 **MVP: ${top[0]!.hero} і ${top[1]!.hero}** (${top[0]!.score} і ${top[1]!.score} балів, різниця менше ${MVP_SHARE_GAP})`);
   else if (top[0]) lines.push(`🏆 **MVP: ${top[0].hero}** (${top[0].score} балів)`);
-  if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн, кінець гри та ривок не враховано._');
+  if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн і частину виживання не враховано._');
   if (verdictText) lines.push(`> ${verdictText}`);
 
   lines.push('```');

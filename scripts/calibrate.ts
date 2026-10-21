@@ -8,11 +8,12 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { CATEGORY_MAX, computeBlame, type CategoryKey } from '../src/analysis/blame.js';
+import { AREA_KEYS, BENCHMARK_MEDIAN, ROLE_SHARE } from '../src/analysis/areas/common.js';
+import { computeBlame } from '../src/analysis/blame.js';
 import { buildContext } from '../src/analysis/context.js';
-import { MVP_CATEGORY_MAX, computeMvp, type MvpCategoryKey } from '../src/analysis/mvp.js';
+import { computeMvp } from '../src/analysis/mvp.js';
 import { matchSchema, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
-import { LANE_MINUTE, assignPositions, avg, laneMatchup, mapLane } from '../src/analysis/scoring.js';
+import { LANE_MINUTE, assignPositions, avg, benchmarkPct, laneMatchup, mapLane, num, sum } from '../src/analysis/scoring.js';
 
 interface Row {
   position: number;
@@ -173,7 +174,7 @@ console.table(
           'winners avg': r1(avg(won.map((r) => r.blame))),
           AUC: r2(auc(lost.map((r) => r.blame), won.map((r) => r.blame))),
           'culprit share': share(lost.filter((r) => r.culprit).length, verdicts.culprit),
-          ...Object.fromEntries((Object.keys(CATEGORY_MAX) as CategoryKey[]).map((k) => [k, r1(avg(lost.map((r) => r.blameCats[k] ?? 0)))])),
+          ...Object.fromEntries(AREA_KEYS.map((k) => [k, r1(avg(lost.map((r) => r.blameCats[k] ?? 0)))])),
         },
       ];
     }),
@@ -194,7 +195,7 @@ console.table(
           'losers avg': r1(avg(lost.map((r) => r.mvp))),
           AUC: r2(auc(won.map((r) => r.mvp), lost.map((r) => r.mvp))),
           'MVP share': share(won.filter((r) => r.isMvp).length, mvpCount),
-          ...Object.fromEntries((Object.keys(MVP_CATEGORY_MAX) as MvpCategoryKey[]).map((k) => [k, r1(avg(won.map((r) => r.mvpCats[k] ?? 0)))])),
+          ...Object.fromEntries(AREA_KEYS.map((k) => [k, r1(avg(won.map((r) => r.mvpCats[k] ?? 0)))])),
         },
       ];
     }),
@@ -239,5 +240,55 @@ console.table(
         ];
       }),
     ),
+  ),
+);
+
+// The rating centres its comparisons on these medians (areas/common.ts). Re-check them as the
+// collection grows: a big gap means the constants should be updated.
+const benchmarks = new Map<string, number[]>();
+const shares = new Map<string, number[]>();
+const addShare = (key: string, position: number, value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return;
+  const k = `${key} ${position}`;
+  shares.set(k, [...(shares.get(k) ?? []), value]);
+};
+for (const match of matches) {
+  for (const p of match.players) {
+    for (const key of Object.keys(BENCHMARK_MEDIAN)) {
+      const value = benchmarkPct(p, key);
+      if (value !== null) benchmarks.set(key, [...(benchmarks.get(key) ?? []), value]);
+    }
+  }
+  for (const radiant of [true, false]) {
+    const context = buildContext(match, radiant);
+    const total = (stat: (p: OdMatch['players'][number]) => number | null | undefined) => sum(context.ours.map((p) => num(stat(p)) ?? 0));
+    const teamPickoffs = context.deaths.filter((d) => d.kind === 'pickoff').length;
+    for (const p of context.ours) {
+      const position = context.positions.get(p.player_slot) ?? 5;
+      const share = (mine: number | null | undefined, all: number) => (all > 0 ? (num(mine) ?? 0) / all : null);
+      addShare('netWorth', position, share(p.net_worth, total((x) => x.net_worth)));
+      addShare('heroDamage', position, share(p.hero_damage, total((x) => x.hero_damage)));
+      addShare('killParticipation', position, share(p.kills + p.assists, total((x) => x.kills)));
+      addShare('towerDamage', position, share(p.tower_damage, total((x) => x.tower_damage)));
+      addShare('deaths', position, share(p.deaths, total((x) => x.deaths)));
+      addShare('xpm', position, share(p.xp_per_min, total((x) => x.xp_per_min)));
+      if (context.parsed && teamPickoffs >= 3) {
+        addShare('pickoffs', position, context.deaths.filter((d) => d.slot === p.player_slot && d.kind === 'pickoff').length / teamPickoffs);
+      }
+    }
+  }
+}
+console.log('Constants the rating is centred on: in the code vs median in these matches');
+console.table(
+  Object.fromEntries(
+    Object.entries(BENCHMARK_MEDIAN).map(([key, value]) => [`benchmark ${key}`, { code: value, data: r2(median(benchmarks.get(key) ?? [])) }]),
+  ),
+);
+console.table(
+  Object.fromEntries(
+    (Object.keys(ROLE_SHARE) as Array<keyof typeof ROLE_SHARE>).map((key) => [
+      `share ${key}`,
+      Object.fromEntries(POSITIONS.map((pos) => [`pos${pos}`, `${r2(ROLE_SHARE[key][pos]!)} / ${r2(median(shares.get(`${key} ${pos}`) ?? []))}`])),
+    ]),
   ),
 );

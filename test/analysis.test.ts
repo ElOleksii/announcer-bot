@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { MatchAnalyzer, MatchEndWatcher, resolveMatchHint } from '../src/analysis/analyzer.js';
+import { AREA_KEYS } from '../src/analysis/areas/common.js';
 import { computeMvp, MVP_SHARE_GAP } from '../src/analysis/mvp.js';
+import { ROLE_WEIGHTS } from '../src/analysis/rating.js';
 import { assignPositions, computeBlame, findOurTeam, plural, ramp, CULPRIT_MIN_SCORE } from '../src/analysis/blame.js';
 import { OpenDotaClient, matchSchema, steamIdToAccountId, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
 import { fallbackMvpVerdict, fallbackVerdict, formatChatReport, formatMvpChat, mvpUserPrompt, verdictUserPrompt } from '../src/analysis/report.js';
@@ -63,18 +65,15 @@ describe('computeBlame on a real parsed match', () => {
     }
   });
 
-  it('judges supports on support work instead of farm', () => {
+  it('rates each player on the areas their role weighs', () => {
     for (const p of report.players) {
-      const keys = p.categories.map((c) => c.key);
-      expect(keys).toContain(p.position >= 4 ? 'support' : 'farm');
-      expect(keys).not.toContain(p.position >= 4 ? 'farm' : 'support');
+      expect(p.categories.map((c) => c.key)).toEqual(AREA_KEYS.filter((k) => ROLE_WEIGHTS[p.position]![k] > 0));
     }
   });
 
-  it('mitigates the top damage dealer', () => {
-    const topDamage = report.players.find((p) => p.mitigations.includes('найбільший урон у команді'));
-    expect(topDamage).toBeDefined();
-    expect(topDamage!.score).toBeLessThan(topDamage!.raw);
+  it('shows what went right as mitigations, never a fact that counted against the player', () => {
+    for (const p of report.players) for (const m of p.mitigations) expect(p.evidence).not.toContain(m);
+    expect(report.players.some((p) => p.mitigations.some((m) => /\d/.test(m)))).toBe(true);
   });
 
   it('reports the winning side as not lost', () => {
@@ -108,23 +107,28 @@ describe('computeBlame rules', () => {
     expect(other.score).toBeLessThanOrEqual(Math.ceil(before.score / 2));
   });
 
-  it('names a culprit only with ≥ 45 points and a 10-point lead', () => {
+  it('names a culprit only with enough points and a clear lead', () => {
     const match = tweak((ours) => {
       const feeder = ours.find((p) => p.position_est === 2)!;
-      feeder.deaths = 18;
-      feeder.deaths_log = Array.from({ length: 18 }, (_, i) => ({ time: 120 + i * 150, gold_fed: 300, time_dead: 40 }));
-      feeder.life_state_dead = 900;
-      feeder.gold_per_min = 250;
-      feeder.xp_per_min = 300;
-      feeder.teamfight_participation = 0.2;
-      feeder.hero_damage = 2000;
+      Object.assign(feeder, {
+        deaths: 18,
+        deaths_log: Array.from({ length: 18 }, (_, i) => ({ time: 120 + i * 150, gold_fed: 300, time_dead: 40 })),
+        gold_per_min: 250,
+        xp_per_min: 300,
+        hero_damage: 2000,
+        kills: 0,
+        assists: 2,
+        net_worth: 4000,
+        tower_damage: 0,
+      });
     });
     const report = computeBlame(match, heroes, DIRE);
     const [first, second] = report.players;
+    expect(first!.position).toBe(2);
     expect(first!.score).toBeGreaterThanOrEqual(CULPRIT_MIN_SCORE);
     expect(first!.score - second!.score).toBeGreaterThanOrEqual(10);
     expect(report.verdict).toEqual({ kind: 'culprit', slot: first!.slot });
-    expect(first!.evidence.join(' ')).toContain('18 смертей');
+    expect(first!.categories.find((c) => c.key === 'survival')!.evidence.join(' ')).toContain('18 смертей');
   });
 
   it('blames the whole team when every core is far behind at 15 minutes', () => {
@@ -161,8 +165,10 @@ describe('computeBlame rules', () => {
     });
     const report = computeBlame(match, heroes, DIRE);
     expect(report.parsed).toBe(false);
-    const unavailable = report.players[0]!.categories.filter((c) => !c.available).map((c) => c.key);
-    expect(unavailable).toEqual(expect.arrayContaining(['lane', 'endgame', 'throw']));
+    for (const p of report.players) {
+      expect(p.categories.find((c) => c.key === 'lane')?.available).toBe(false);
+      expect(p.categories.find((c) => c.key === 'fights')?.available).toBe(true);
+    }
     expect(new Set(report.players.map((p) => p.position)).size).toBe(5);
   });
 });
@@ -371,11 +377,9 @@ describe('computeMvp on a real parsed match (Radiant won)', () => {
     }
   });
 
-  it('rewards supports for support work instead of farm', () => {
+  it('rates each player on the areas their role weighs', () => {
     for (const p of report.players) {
-      const keys = p.categories.map((c) => c.key);
-      expect(keys).toContain(p.position >= 4 ? 'support' : 'farm');
-      expect(keys).not.toContain(p.position >= 4 ? 'farm' : 'support');
+      expect(p.categories.map((c) => c.key)).toEqual(AREA_KEYS.filter((k) => ROLE_WEIGHTS[p.position]![k] > 0));
     }
   });
 
@@ -389,25 +393,21 @@ describe('computeMvp on a real parsed match (Radiant won)', () => {
   });
 
   it('shares MVP when the top two are within the gap', () => {
-    const match = loadMatch();
-    const ember = match.players.find((p) => p.isRadiant && heroes.get(p.hero_id)?.localized_name === 'Ember Spirit')!;
-    const kez = match.players.find((p) => p.isRadiant && heroes.get(p.hero_id)?.localized_name === 'Kez')!;
-    for (const key of ['kills', 'deaths', 'assists', 'gold_per_min', 'xp_per_min', 'hero_damage', 'tower_damage', 'teamfight_participation', 'kills_log', 'deaths_log', 'gold_t', 'lh_t'] as const) {
-      (ember as Record<string, unknown>)[key] = structuredClone((kez as Record<string, unknown>)[key]);
-    }
-    const r = computeMvp(match, heroes, RADIANT);
+    // In the real ranked fixture Radiant's pos3 and pos1 finish 4 points apart.
+    const ranked = matchSchema.parse(fixture('opendota-ranked-parsed'));
+    const r = computeMvp(ranked, heroes, RADIANT);
     expect(Math.abs(r.players[0]!.score - r.players[1]!.score)).toBeLessThan(MVP_SHARE_GAP);
     expect(r.mvpSlots).toHaveLength(2);
     expect(formatMvpChat(r)).toMatch(/MVP: .+ і .+/);
   });
 
-  it('penalises many deaths', () => {
+  it('many deaths hold the score down and are named', () => {
+    const before = report.players.find((x) => x.hero === 'Dark Willow')!;
     const match = loadMatch();
-    const willow = match.players.find((p) => p.isRadiant && heroes.get(p.hero_id)?.localized_name === 'Dark Willow')!;
-    willow.deaths = 14;
+    match.players.find((p) => p.isRadiant && heroes.get(p.hero_id)?.localized_name === 'Dark Willow')!.deaths = 14;
     const p = computeMvp(match, heroes, RADIANT).players.find((x) => x.hero === 'Dark Willow')!;
-    expect(p.modifiers.join(' ')).toContain('багато смертей');
-    expect(p.score).toBeLessThan(p.raw);
+    expect(p.modifiers.join(' ')).toContain('14 смертей');
+    expect(p.raw).toBeLessThan(before.raw);
   });
 
   it('works on an unparsed match with basic stats only', () => {
@@ -419,8 +419,7 @@ describe('computeMvp on a real parsed match (Radiant won)', () => {
     }
     const r = computeMvp(match, heroes, RADIANT);
     expect(r.parsed).toBe(false);
-    const unavailable = r.players[0]!.categories.filter((c) => !c.available).map((c) => c.key);
-    expect(unavailable).toEqual(expect.arrayContaining(['lane', 'closing', 'surge']));
+    for (const p of r.players) expect(p.categories.find((c) => c.key === 'lane')?.available).toBe(false);
     expect(r.mvpSlots.length).toBeGreaterThan(0);
   });
 
