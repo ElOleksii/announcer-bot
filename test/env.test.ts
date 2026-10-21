@@ -88,7 +88,7 @@ describe('analysis config', () => {
   const base = { GSI_TOKEN, PLAYBACK_MODE: 'local' };
 
   it('defaults to auto analysis with the harsh tone and the built-in verdict', () => {
-    expect(loadConfig(base).analysis).toEqual({ auto: true, tone: 'harsh', gemini: null, playerAccountId: null, channelId: null });
+    expect(loadConfig(base).analysis).toEqual({ auto: true, tone: 'harsh', gemini: null, playerAccountId: null, channelId: null, openDotaApiKey: null });
   });
 
   it('uses Gemini for the verdict whenever a key is set', () => {
@@ -98,7 +98,12 @@ describe('analysis config', () => {
       gemini: { apiKey: 'g', model: 'gemini-3.1-flash-lite', fallbackModels: ['gemini-3.5-flash-lite'] },
       playerAccountId: null,
       channelId: null,
+      openDotaApiKey: null,
     });
+  });
+
+  it('passes an OpenDota key through when set', () => {
+    expect(loadConfig({ ...base, OPENDOTA_API_KEY: 'k' }).analysis.openDotaApiKey).toBe('k');
   });
 });
 

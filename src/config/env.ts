@@ -46,6 +46,7 @@ const envSchema = gsiEnvSchema
     ANALYSIS_TONE: z.enum(ANALYSIS_TONES).default('harsh'),
     ANALYSIS_CHANNEL_ID: z.string().regex(/^\d+$/, 'must be a numeric channel id').optional(),
     PLAYER_STEAM_ID: z.string().regex(/^7656\d{13}$/, 'must be a 17-digit SteamID64, e.g. 76561198000000000').optional(),
+    OPENDOTA_API_KEY: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.PLAYBACK_MODE === 'discord') {
@@ -99,6 +100,8 @@ export interface AnalysisConfig {
   gemini: GeminiConfig | null;
   /** OpenDota account id from PLAYER_STEAM_ID; GSI provides it too, but only while a game runs. */
   playerAccountId: number | null;
+  /** Paid OpenDota key; null → the free tier (~60 requests/min, 3000/day). */
+  openDotaApiKey: string | null;
 }
 
 export interface AppConfig {
@@ -179,6 +182,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         ? { apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL, fallbackModels: env.GEMINI_FALLBACK_MODELS }
         : null,
       playerAccountId: env.PLAYER_STEAM_ID ? steamIdToAccountId(env.PLAYER_STEAM_ID) : null,
+      openDotaApiKey: env.OPENDOTA_API_KEY ?? null,
     },
   };
 }
