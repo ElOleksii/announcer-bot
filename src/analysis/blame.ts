@@ -1,10 +1,17 @@
 import type { HeroInfo, OdMatch, OdPlayer } from './opendota.js';
 import {
   DEATHS,
+  DEWARDS,
+  LANE_MINUTE,
+  WARDS,
   assignPositions,
   at,
   avg,
+  benchmarkPct,
+  dewardCount,
   isLeaver,
+  laneFact,
+  laneMatchup,
   mmss,
   num,
   pct,
@@ -23,18 +30,21 @@ export { assignPositions, isLeaver, plural, ramp } from './scoring.js';
 /**
  * Deterministic "who lost us the game" scoring. The rules (agreed with the user):
  * - everyone is judged against their role (position 1–5) and their direct opponent;
- * - six penalty categories add up to at most 100 points;
+ * - six penalty categories add up to at most 100 points; cores are judged on farm, supports on
+ *   support work (wards, dewards) instead, so neither role starts with a 20-point head start;
  * - mitigations reduce the score (carried the game, solo vs two in lane, leaver on the team);
  * - a single culprit only with ≥ 45 points and a 10-point lead, otherwise the whole team.
  * The AI only phrases the result; it never decides who is to blame.
  */
 
-export type CategoryKey = 'feed' | 'lane' | 'farm' | 'contribution' | 'endgame' | 'throw';
+/** `farm` applies to positions 1–3, `support` to 4–5: each player gets six categories. */
+export type CategoryKey = 'feed' | 'lane' | 'farm' | 'support' | 'contribution' | 'endgame' | 'throw';
 
 export const CATEGORY_MAX: Record<CategoryKey, number> = {
   feed: 25,
   lane: 15,
   farm: 20,
+  support: 20,
   contribution: 20,
   endgame: 10,
   throw: 10,
@@ -44,6 +54,7 @@ export const CATEGORY_LABELS: Record<CategoryKey, string> = {
   feed: 'фід',
   lane: 'лайн',
   farm: 'фарм',
+  support: 'підтримка',
   contribution: 'внесок',
   endgame: 'кінець гри',
   throw: 'троу',
@@ -157,49 +168,61 @@ export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourT
     // The "longest in tavern" text is only true for the actual maximum.
     if (dead !== null && dead < Math.max(...deadTimes)) feed.evidence = feed.evidence.filter((e) => !e.includes('у таверні'));
 
-    // B. Lane (at 10 minutes, against the direct opponent)
-    const soloVsTwo = isSoloVsTwo(p, ours, theirs, position);
-    const myGold10 = at(p.gold_t, 10);
-    const oppGold10 = opp ? at(opp.gold_t, 10) : null;
-    const myLh10 = at(p.lh_t, 10);
-    const oppLh10 = opp ? at(opp.lh_t, 10) : null;
-    let lane = category(
+    // B. Lane at 10 minutes: our side of the lane against the enemies who actually stood in it.
+    const matchup = laneMatchup(p, ours, theirs, LANE_MINUTE);
+    const behind = (t: [number, number] | null | undefined) => (t ? ramp((t[1] - t[0]) / Math.max(t[1], 1), 0.1, 0.5) : null);
+    const lane = category(
       'lane',
       [
-        {
-          weight: 0.6,
-          value: myGold10 === null || oppGold10 === null ? null : ramp((oppGold10 - myGold10) / Math.max(oppGold10, 1), 0.1, 0.5),
-          evidence: `на 10-й хвилині ${myGold10} золота проти ${oppGold10} у ${oppName}`,
-        },
-        {
-          weight: 0.4,
-          value: myLh10 === null || oppLh10 === null ? null : ramp((oppLh10 - myLh10) / Math.max(oppLh10, 1), 0.15, 0.6),
-          evidence: `${plural(myLh10 ?? 0, ['добивання', 'добивання', 'добивань'])} на 10-й хвилині проти ${oppLh10}`,
-        },
+        { weight: 0.6, value: behind(matchup?.gold), evidence: matchup?.gold ? laneFact(matchup, matchup.gold, 'золота', heroName) : '' },
+        { weight: 0.4, value: behind(matchup?.xp), evidence: matchup?.xp ? laneFact(matchup, matchup.xp, 'досвіду', heroName) : '' },
       ],
       support ? SUPPORT_LANE_FACTOR : 1,
     );
-    if (soloVsTwo && lane.points > 0) {
-      lane = { ...lane, points: 0, evidence: [] };
+    // Uneven lanes are not compared at all; say why for the one who stood alone.
+    if (position !== 2 && matchup && matchup.allies.length === 1 && matchup.enemies.length >= 2) {
       mitigations.push('стояв сам проти двох на лайні');
     }
 
-    // C. Farm (cores only)
-    const farm = support
-      ? category('farm', [])
-      : category('farm', [
-          {
-            weight: 0.6,
-            value: opp ? ramp((opp.gold_per_min - p.gold_per_min) / Math.max(opp.gold_per_min, 1), 0.1, 0.45) : null,
-            evidence: `GPM ${p.gold_per_min} проти ${opp?.gold_per_min} у ${oppName}`,
-          },
-          {
-            weight: 0.4,
-            value: opp ? ramp((opp.xp_per_min - p.xp_per_min) / Math.max(opp.xp_per_min, 1), 0.1, 0.45) : null,
-            evidence: `XPM ${p.xp_per_min} проти ${opp?.xp_per_min} у ${oppName}`,
-          },
-        ]);
-    if (support) farm.available = true; // not applicable rather than missing
+    // C. Farm for cores; support work (vision) for supports, against the enemy on the same position.
+    let farmOrSupport: CategoryScore;
+    if (!support) {
+      farmOrSupport = category('farm', [
+        {
+          weight: 0.6,
+          value: opp ? ramp((opp.gold_per_min - p.gold_per_min) / Math.max(opp.gold_per_min, 1), 0.1, 0.45) : null,
+          evidence: `GPM ${p.gold_per_min} проти ${opp?.gold_per_min} у ${oppName}`,
+        },
+        {
+          weight: 0.4,
+          value: opp ? ramp((opp.xp_per_min - p.xp_per_min) / Math.max(opp.xp_per_min, 1), 0.1, 0.45) : null,
+          evidence: `XPM ${p.xp_per_min} проти ${opp?.xp_per_min} у ${oppName}`,
+        },
+      ]);
+    } else {
+      const wards = wardCount(p);
+      const oppWards = opp ? wardCount(opp) : null;
+      const dewards = dewardCount(p);
+      const oppDewards = opp ? dewardCount(opp) : null;
+      farmOrSupport = category('support', [
+        {
+          weight: 0.45,
+          value: wards === null || oppWards === null ? null : ramp((oppWards - wards) / Math.max(oppWards, 1), 0.2, 0.7),
+          evidence: `${plural(wards ?? 0, WARDS)} проти ${oppWards} у ${oppName}`,
+        },
+        {
+          weight: 0.25,
+          value: dewards === null || oppDewards === null ? null : ramp(oppDewards - dewards, 1, 4),
+          evidence: `${plural(dewards ?? 0, DEWARDS)} проти ${oppDewards} у ${oppName}`,
+        },
+        // Levels, not gold: a support's gold goes into wards, and taking farm from cores is no merit.
+        {
+          weight: 0.3,
+          value: opp ? ramp((opp.xp_per_min - p.xp_per_min) / Math.max(opp.xp_per_min, 1), 0.1, 0.45) : null,
+          evidence: `XPM ${p.xp_per_min} проти ${opp?.xp_per_min} у ${oppName}`,
+        },
+      ]);
+    }
 
     // D. Contribution
     const tp = num(p.teamfight_participation);
@@ -228,19 +251,19 @@ export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourT
         },
       ]);
     } else {
-      const wards = wardCount(p);
-      const oppWards = opp ? wardCount(opp) : null;
+      // Hero damage against the same hero in other games: a support's damage share depends on the hero.
+      const dmgPct = benchmarkPct(p, 'hero_damage_per_min');
       const stuns = num(p.stuns);
       const oppStuns = opp ? num(opp.stuns) : null;
       contribution = category('contribution', [
         tpPart,
         {
-          weight: 0.4,
-          value: wards === null || oppWards === null ? null : ramp((oppWards - wards) / Math.max(oppWards, 1), 0.2, 0.7),
-          evidence: `${plural(wards ?? 0, ['вард', 'варди', 'вардів'])} проти ${oppWards} у ${oppName}`,
+          weight: 0.3,
+          value: dmgPct === null ? null : ramp(0.5 - dmgPct, 0, 0.35),
+          evidence: `урон по героях кращий лише за ${pct(dmgPct ?? 0)}% ігор на цьому героєві`,
         },
         {
-          weight: 0.2,
+          weight: 0.3,
           value: stuns === null || oppStuns === null ? null : ramp((oppStuns - stuns) / Math.max(oppStuns, 1), 0.3, 0.8),
           evidence: `${Math.round(stuns ?? 0)} с стану проти ${Math.round(oppStuns ?? 0)} у ${oppName}`,
         },
@@ -282,7 +305,7 @@ export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourT
       throwCat = category('throw', []);
     }
 
-    const categories = [feed, lane, farm, contribution, endgame, throwCat];
+    const categories = [feed, lane, farmOrSupport, contribution, endgame, throwCat];
     const raw = round1(sum(categories.map((c) => c.points)));
 
     let factor = 1;
@@ -344,14 +367,6 @@ function decideVerdict(
     return { kind: 'culprit', slot: first.slot };
   }
   return { kind: 'team', reason: 'no-clear-culprit' };
-}
-
-/** Safe/off lane with no lane partner while two or more enemies were in that lane. */
-function isSoloVsTwo(p: OdPlayer, ours: OdPlayer[], theirs: OdPlayer[], position: number): boolean {
-  const lane = num(p.lane);
-  if (position === 2 || lane === null || lane < 1 || lane > 3 || p.is_roaming) return false;
-  const inLane = (team: OdPlayer[]) => team.filter((x) => num(x.lane) === lane && !x.is_roaming).length;
-  return inLane(ours) === 1 && inLane(theirs) >= 2;
 }
 
 /** Which team "we" were on: by account id (from GSI), else by hero id. */

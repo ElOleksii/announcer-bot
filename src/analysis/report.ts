@@ -42,6 +42,7 @@ export function formatChatReport(report: BlameReport, verdictText?: string): str
   return lines.join('\n');
 }
 
+
 export function verdictSystemPrompt(tone: AnalysisTone): string {
   const style =
     tone === 'harsh'

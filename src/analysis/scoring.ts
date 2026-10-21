@@ -77,13 +77,28 @@ export function at(series: number[] | null | undefined, minute: number): number 
   return series && series.length > minute ? (series[minute] ?? null) : null;
 }
 
+/** Enemy wards destroyed (observers and sentries). */
+export function dewardCount(p: OdPlayer): number | null {
+  const obs = num(p.observer_kills);
+  const sen = num(p.sentry_kills);
+  return obs === null && sen === null ? null : (obs ?? 0) + (sen ?? 0);
+}
+
+/** 0..1: where this game ranks among recent public games on the same hero (OpenDota benchmarks). */
+export function benchmarkPct(p: OdPlayer, key: string): number | null {
+  return num(p.benchmarks?.[key]?.pct);
+}
+
+export const WARDS = ['вард', 'варди', 'вардів'] as const;
+export const DEWARDS = ['дівард', 'діварди', 'дівардів'] as const;
+
 export function wardCount(p: OdPlayer): number | null {
   const obs = num(p.obs_placed);
   const sen = num(p.sen_placed);
   return obs === null && sen === null ? null : (obs ?? 0) + (sen ?? 0);
 }
 
-/** Splits a match into our team and theirs, with positions and direct opponents. */
+/** Splits a match into our team and theirs, with positions and direct (same position) opponents. */
 export function teams(match: OdMatch, ourTeamIsRadiant: boolean) {
   const ours = match.players.filter((p) => p.isRadiant === ourTeamIsRadiant);
   const theirs = match.players.filter((p) => p.isRadiant !== ourTeamIsRadiant);
@@ -91,6 +106,53 @@ export function teams(match: OdMatch, ourTeamIsRadiant: boolean) {
   const theirPos = assignPositions(theirs);
   const opponentOf = (p: OdPlayer) => theirs.find((e) => theirPos.get(e.player_slot) === ourPos.get(p.player_slot)) ?? null;
   return { ours, theirs, ourPos, opponentOf };
+}
+
+/** The lane stage is judged at this minute. */
+export const LANE_MINUTE = 10;
+
+/** "на 10-й хвилині лінія мала 5200 золота проти 6100 у Lion і Juggernaut" ("лінія мала" only for a duo). */
+export function laneFact(m: LaneMatchup, totals: [number, number], unit: string, heroName: (p: OdPlayer) => string): string {
+  const duo = m.allies.length > 1 ? 'лінія мала ' : '';
+  return `на ${LANE_MINUTE}-й хвилині ${duo}${totals[0]} ${unit} проти ${totals[1]} у ${m.enemies.map(heroName).join(' і ')}`;
+}
+
+/** Map lane (1 bottom, 2 middle, 3 top) of a player who laned rather than roamed or jungled. */
+export function mapLane(p: OdPlayer): number | null {
+  const lane = num(p.lane);
+  return lane !== null && lane >= 1 && lane <= 3 && !p.is_roaming ? lane : null;
+}
+
+export interface LaneMatchup {
+  /** Our players in that lane, the player included. */
+  allies: OdPlayer[];
+  enemies: OdPlayer[];
+  /** Lane totals [ours, theirs] at the minute; null when missing or the sides are uneven (1 vs 2). */
+  gold: [number, number] | null;
+  xp: [number, number] | null;
+}
+
+/**
+ * Who actually stood against whom in the player's lane. Lanes are geographic, so our safe lane meets
+ * their offlane: comparing position 1 with their position 1 would compare players who never met.
+ */
+export function laneMatchup(p: OdPlayer, ours: OdPlayer[], theirs: OdPlayer[], minute: number): LaneMatchup | null {
+  const lane = mapLane(p);
+  if (lane === null) return null;
+  const allies = ours.filter((x) => mapLane(x) === lane);
+  const enemies = theirs.filter((x) => mapLane(x) === lane);
+  const even = enemies.length > 0 && allies.length === enemies.length;
+  const total = (side: OdPlayer[], series: (x: OdPlayer) => number[] | null | undefined): number | null => {
+    const values = side.map((x) => at(series(x), minute));
+    return values.every((v) => v !== null) ? sum(values as number[]) : null;
+  };
+  const pair = (series: (x: OdPlayer) => number[] | null | undefined): [number, number] | null => {
+    if (!even) return null;
+    const mine = total(allies, series);
+    const theirsTotal = total(enemies, series);
+    return mine === null || theirsTotal === null ? null : [mine, theirsTotal];
+  };
+  return { allies, enemies, gold: pair((x) => x.gold_t), xp: pair((x) => x.xp_t) };
 }
 
 /** Minutes (end of a 2-minute window) where our gold lead changed by at least `delta` (negative = dropped). */
