@@ -22,6 +22,8 @@ export interface FightPlayer {
   damage: number;
   goldDelta: number;
   buybacks: number;
+  /** Items used in the fight, by item key (e.g. black_king_bar). */
+  itemUses: Record<string, number>;
 }
 
 export interface Fight {
@@ -123,6 +125,7 @@ export function buildContext(match: OdMatch, ourTeamIsRadiant: boolean): MatchCo
         damage: tp.damage ?? 0,
         goldDelta,
         buybacks: tp.buybacks ?? 0,
+        itemUses: tp.item_uses ?? {},
       });
       goldSwing += isOurs(p) ? goldDelta : -goldDelta;
       if (isOurs(p)) ourDeaths += deaths;

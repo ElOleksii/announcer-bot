@@ -3,8 +3,8 @@ import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { MatchAnalyzer, MatchEndWatcher, resolveMatchHint } from '../src/analysis/analyzer.js';
 import { AREA_KEYS } from '../src/analysis/areas/common.js';
-import { computeMvp, MVP_SHARE_GAP } from '../src/analysis/mvp.js';
-import { ROLE_WEIGHTS } from '../src/analysis/rating.js';
+import { computeMvp, MVP_SHARE_GAP, pickMvps } from '../src/analysis/mvp.js';
+import { ROLE_WEIGHTS, rateTeam } from '../src/analysis/rating.js';
 import { assignPositions, computeBlame, findOurTeam, plural, ramp, CULPRIT_MIN_SCORE } from '../src/analysis/blame.js';
 import { OpenDotaClient, matchSchema, steamIdToAccountId, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
 import { fallbackMvpVerdict, fallbackVerdict, formatChatReport, formatMvpChat, mvpUserPrompt, verdictUserPrompt } from '../src/analysis/report.js';
@@ -396,13 +396,13 @@ describe('computeMvp on a real parsed match (Radiant won)', () => {
     expect(r.mvpSlots).not.toContain(kez.player_slot);
   });
 
-  it('shares MVP when the top two are within the gap', () => {
-    // In the real ranked fixture Radiant's pos3 and pos1 finish 4 points apart.
-    const ranked = matchSchema.parse(fixture('opendota-ranked-parsed'));
-    const r = computeMvp(ranked, heroes, RADIANT);
-    expect(Math.abs(r.players[0]!.score - r.players[1]!.score)).toBeLessThan(MVP_SHARE_GAP);
-    expect(r.mvpSlots).toHaveLength(2);
-    expect(formatMvpChat(r)).toMatch(/MVP: .+ і .+/);
+  it('shares MVP when the top two are within the gap, never with a leaver', () => {
+    const player = (slot: number, score: number, leaver = false) => ({ slot, score, leaver });
+    expect(pickMvps([player(1, 40), player(2, 40 - MVP_SHARE_GAP + 1), player(3, 10)])).toEqual([1, 2]);
+    expect(pickMvps([player(1, 40), player(2, 40 - MVP_SHARE_GAP), player(3, 10)])).toEqual([1]);
+    expect(pickMvps([player(1, 40), player(2, 39, true)])).toEqual([1]);
+    const shared = { ...report, mvpSlots: [report.players[0]!.slot, report.players[1]!.slot] };
+    expect(formatMvpChat(shared)).toMatch(/MVP: .+ і .+/);
   });
 
   it('many deaths hold the score down and are named', () => {
@@ -410,7 +410,7 @@ describe('computeMvp on a real parsed match (Radiant won)', () => {
     const match = loadMatch();
     match.players.find((p) => p.isRadiant && heroes.get(p.hero_id)?.localized_name === 'Dark Willow')!.deaths = 14;
     const p = computeMvp(match, heroes, RADIANT).players.find((x) => x.hero === 'Dark Willow')!;
-    expect(p.modifiers.join(' ')).toContain('14 смертей');
+    expect(rateTeam(match, heroes, RADIANT).players.find((x) => x.hero === 'Dark Willow')!.bad.join(' ')).toContain('14 смертей');
     expect(p.raw).toBeLessThan(before.raw);
   });
 

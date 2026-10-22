@@ -4,6 +4,7 @@ import type { Logger } from '../logger.js';
 import { computeBlame, findOurTeam, type BlameReport } from './blame.js';
 import { computeMvp, type MvpReport } from './mvp.js';
 import { MatchNotFoundError, steamIdToAccountId, type OdMatch, type OpenDotaClient } from './opendota.js';
+import { loadReference } from './reference.js';
 import {
   VERDICT_MAX_LENGTH,
   fallbackMvpVerdict,
@@ -74,10 +75,13 @@ export class MatchAnalyzer {
     if (ourRadiant === null) return { kind: 'unknown-team' };
     if (match.radiant_win === null) return { kind: 'not-found' };
     const heroes = await openDota.getHeroes();
+    // Meta, matchups and hero histories for the pick area and the draft line; what fails drops out.
+    const { data: ref, failures } = await loadReference(openDota, match, ourRadiant);
+    if (failures.length) this.log.warn({ failures }, 'some reference data is unavailable');
     const scores = (players: Array<{ hero: string; score: number }>) => players.map((p) => `${p.hero}:${p.score}`);
 
     if (match.radiant_win === ourRadiant) {
-      const report = computeMvp(match, heroes, ourRadiant);
+      const report = computeMvp(match, heroes, ourRadiant, ref);
       this.log.info({ matchId: report.matchId, mvp: report.mvpSlots, scores: scores(report.players) }, 'win analysed');
       const verdictText = await this.writeVerdict(
         { system: mvpSystemPrompt(tone), user: mvpUserPrompt(report) },
@@ -87,7 +91,7 @@ export class MatchAnalyzer {
       return { kind: 'ok', outcome: 'win', report, chatText: formatMvpChat(report, verdictText), verdictText };
     }
 
-    const report = computeBlame(match, heroes, ourRadiant);
+    const report = computeBlame(match, heroes, ourRadiant, ref);
     this.log.info({ matchId: report.matchId, verdict: report.verdict, scores: scores(report.players) }, 'loss analysed');
     const verdictText = await this.writeVerdict(
       { system: verdictSystemPrompt(tone), user: verdictUserPrompt(report) },

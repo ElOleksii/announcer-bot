@@ -1,4 +1,5 @@
 import { CATEGORY_LABELS, type BlameReport, type PlayerBlame } from './blame.js';
+import type { DraftOutlook } from './draft.js';
 import { MVP_CATEGORY_LABELS, MVP_SHARE_GAP, type MvpReport, type PlayerContribution } from './mvp.js';
 
 export const ANALYSIS_TONES = ['harsh', 'light'] as const;
@@ -8,6 +9,13 @@ export type AnalysisTone = (typeof ANALYSIS_TONES)[number];
 export const VERDICT_MAX_LENGTH = 600;
 
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+
+/** "орієнтовно 46% на перемогу (сила героїв у цьому ранзі та матчапи)" — context only, never blame. */
+function draftText(draft: DraftOutlook | null): string | null {
+  if (!draft) return null;
+  const basis = draft.matchupEdge === null ? 'сила героїв у цьому ранзі' : 'сила героїв у цьому ранзі та матчапи';
+  return `орієнтовно ${Math.round(draft.expected * 100)}% на перемогу (${basis})`;
+}
 
 function culprit(report: BlameReport): PlayerBlame | null {
   const { verdict } = report;
@@ -26,6 +34,8 @@ export function formatChatReport(report: BlameReport, verdictText?: string): str
   } else lines.push('🤝 **Винні всі:** явного лідера за балами немає.');
 
   if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн і частину виживання не враховано._');
+  const draft = draftText(report.draft);
+  if (draft) lines.push(`🧩 Драфт: ${draft}`);
   if (verdictText) lines.push(`> ${verdictText}`);
 
   lines.push('```');
@@ -71,6 +81,8 @@ export function verdictUserPrompt(report: BlameReport): string {
     lines.push('Вердикт: винна вся команда — до 15-ї хвилини всі кори програвали своїм суперникам.');
   } else lines.push('Вердикт: винна вся команда — немає гравця, який явно гірший за інших.');
   if (!report.parsed) lines.push('Детальних даних немає, лише базова статистика.');
+  const draft = draftText(report.draft);
+  if (draft) lines.push(`Драфт (лише контекст, не вина): ${draft}.`);
 
   report.players.slice(0, 3).forEach((p, i) => {
     lines.push(`${i + 1}. ${p.hero}, позиція ${p.position}, ${p.score} балів.`);
@@ -119,6 +131,8 @@ export function formatMvpChat(report: MvpReport, verdictText?: string): string {
   if (top.length === 2) lines.push(`🏆 **MVP: ${top[0]!.hero} і ${top[1]!.hero}** (${top[0]!.score} і ${top[1]!.score} балів, різниця менше ${MVP_SHARE_GAP})`);
   else if (top[0]) lines.push(`🏆 **MVP: ${top[0].hero}** (${top[0].score} балів)`);
   if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн і частину виживання не враховано._');
+  const draft = draftText(report.draft);
+  if (draft) lines.push(`🧩 Драфт: ${draft}`);
   if (verdictText) lines.push(`> ${verdictText}`);
 
   lines.push('```');
@@ -159,6 +173,8 @@ export function mvpUserPrompt(report: MvpReport): string {
   if (top.length === 2) lines.push(`MVP ділять двоє: ${top[0]!.hero} (${top[0]!.score}) і ${top[1]!.hero} (${top[1]!.score}) — різниця менше ${MVP_SHARE_GAP} балів.`);
   else if (top[0]) lines.push(`MVP — ${top[0].hero} (позиція ${top[0].position}), ${top[0].score} балів внеску зі 100.`);
   if (!report.parsed) lines.push('Детальних даних немає, лише базова статистика.');
+  const draft = draftText(report.draft);
+  if (draft) lines.push(`Драфт (лише контекст, не вина): ${draft}.`);
   report.players.slice(0, 3).forEach((p, i) => {
     lines.push(`${i + 1}. ${p.hero}, позиція ${p.position}, ${p.score} балів.`);
     if (p.evidence.length) lines.push(`   Факти: ${p.evidence.join('; ')}.`);

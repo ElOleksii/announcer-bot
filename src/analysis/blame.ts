@@ -1,6 +1,8 @@
 import type { AreaKey } from './areas/common.js';
+import type { DraftOutlook } from './draft.js';
 import type { HeroInfo, OdMatch, OdPlayer } from './opendota.js';
 import { AREA_LABELS, rateTeam, type PlayerRating } from './rating.js';
+import type { ReferenceData } from './reference.js';
 import { at, round1, type CategoryScore as Scored } from './scoring.js';
 
 export { assignPositions, isLeaver, plural, ramp } from './scoring.js';
@@ -54,6 +56,8 @@ export interface BlameReport {
   /** Our players, highest score first. */
   players: PlayerBlame[];
   verdict: Verdict;
+  /** Rough read of the draft, shown as context; null without hero stats. */
+  draft: DraftOutlook | null;
 }
 
 /** Each area's share of what went wrong, as table points. */
@@ -69,8 +73,8 @@ export function categories(rating: PlayerRating, sign: 1 | -1): Array<Scored<Are
     }));
 }
 
-export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean): BlameReport {
-  const { context, players: ratings, opponentOf } = rateTeam(match, heroes, ourTeamIsRadiant);
+export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean, ref?: ReferenceData): BlameReport {
+  const { context, players: ratings, opponentOf, draft } = rateTeam(match, heroes, ourTeamIsRadiant, ref);
   const anyLeaver = ratings.some((r) => r.leaver);
 
   const players: PlayerBlame[] = ratings.map((r) => {
@@ -92,6 +96,7 @@ export function computeBlame(match: OdMatch, heroes: Map<number, HeroInfo>, ourT
     parsed: context.parsed,
     players,
     verdict: decideVerdict(players, context.ours, opponentOf, context.positions),
+    draft,
   };
 }
 
