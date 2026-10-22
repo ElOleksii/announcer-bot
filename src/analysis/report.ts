@@ -1,5 +1,7 @@
 import { CATEGORY_LABELS, type BlameReport, type PlayerBlame } from './blame.js';
+import type { Confidence } from './confidence.js';
 import type { DraftOutlook } from './draft.js';
+import type { KeyFight } from './keyfight.js';
 import { MVP_CATEGORY_LABELS, MVP_SHARE_GAP, type MvpReport, type PlayerContribution } from './mvp.js';
 
 export const ANALYSIS_TONES = ['harsh', 'light'] as const;
@@ -17,6 +19,44 @@ function draftText(draft: DraftOutlook | null): string | null {
   return `орієнтовно ${Math.round(draft.expected * 100)}% на перемогу (${basis})`;
 }
 
+/** "⚔️ Ключовий файт на 23:10: −4190 золота, наших загинуло 3, їхніх 0; першим упав наш Pangolier". */
+function keyFightText(fight: KeyFight | null): string | null {
+  if (!fight) return null;
+  const at = `на ${mmss(fight.start)}`;
+  if (fight.goldSwing < 0) {
+    const first = fight.standout ? `; першим упав наш ${fight.standout.hero}` : '';
+    return `${at}: −${-fight.goldSwing} золота, наших загинуло ${fight.ourDeaths}, їхніх ${fight.theirDeaths}${first}`;
+  }
+  const top = fight.standout ? `; найбільше урону — наш ${fight.standout.hero} (${fight.standout.damage})` : '';
+  return `${at}: +${fight.goldSwing} золота, їхніх загинуло ${fight.theirDeaths}, наших ${fight.ourDeaths}${top}`;
+}
+
+/** Lines under the verdict that tell how much to trust it and what decided the game. */
+function contextLines(report: { parsed: boolean; draft: DraftOutlook | null; confidence: Confidence; keyFight: KeyFight | null }): string[] {
+  const lines: string[] = [];
+  if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн і частину виживання не враховано._');
+  else if (report.confidence.level !== 'high') {
+    const level = report.confidence.level === 'medium' ? 'середня' : 'низька';
+    lines.push(`📊 Впевненість ${level}: дані є лише для ${Math.round(report.confidence.coverage * 100)}% оцінки.`);
+  }
+  const fight = keyFightText(report.keyFight);
+  if (fight) lines.push(`⚔️ Ключовий файт ${fight}`);
+  const draft = draftText(report.draft);
+  if (draft) lines.push(`🧩 Драфт: ${draft}`);
+  return lines;
+}
+
+/** The same context for the model, in plain sentences. */
+function contextFacts(report: { parsed: boolean; draft: DraftOutlook | null; keyFight: KeyFight | null }): string[] {
+  const lines: string[] = [];
+  if (!report.parsed) lines.push('Детальних даних немає, лише базова статистика.');
+  const fight = keyFightText(report.keyFight);
+  if (fight) lines.push(`Ключовий файт ${fight}.`);
+  const draft = draftText(report.draft);
+  if (draft) lines.push(`Драфт (лише контекст, не вина): ${draft}.`);
+  return lines;
+}
+
 function culprit(report: BlameReport): PlayerBlame | null {
   const { verdict } = report;
   return verdict.kind === 'culprit' ? (report.players.find((p) => p.slot === verdict.slot) ?? null) : null;
@@ -30,12 +70,12 @@ export function formatChatReport(report: BlameReport, verdictText?: string): str
   const main = culprit(report);
   if (main) lines.push(`🎯 **Головний винний: ${main.hero}** (${main.score} балів)`);
   else if (report.verdict.kind === 'team' && report.verdict.reason === 'behind-everywhere') {
-    lines.push('🤝 **Винні всі:** до 15-ї хвилини програвали по всіх лініях.');
+    lines.push('🤝 **Винні всі:** на 10-й хвилині програли кожну лінію.');
+  } else if (report.verdict.kind === 'team' && report.verdict.reason === 'not-enough-data') {
+    lines.push('🤝 **Поки без головного винного:** даних замало, щоб когось виділити.');
   } else lines.push('🤝 **Винні всі:** явного лідера за балами немає.');
 
-  if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн і частину виживання не враховано._');
-  const draft = draftText(report.draft);
-  if (draft) lines.push(`🧩 Драфт: ${draft}`);
+  lines.push(...contextLines(report));
   if (verdictText) lines.push(`> ${verdictText}`);
 
   lines.push('```');
@@ -78,11 +118,11 @@ export function verdictUserPrompt(report: BlameReport): string {
   lines.push(`Поразка, гра тривала ${mmss(report.durationSec)}.`);
   if (main) lines.push(`Вердикт: головний винний — ${main.hero} (позиція ${main.position}), ${main.score} штрафних балів зі 100.`);
   else if (report.verdict.kind === 'team' && report.verdict.reason === 'behind-everywhere') {
-    lines.push('Вердикт: винна вся команда — до 15-ї хвилини всі кори програвали своїм суперникам.');
+    lines.push('Вердикт: винна вся команда — на 10-й хвилині програли кожну лінію.');
+  } else if (report.verdict.kind === 'team' && report.verdict.reason === 'not-enough-data') {
+    lines.push('Вердикт: головного винного не названо — даних замало, щоб когось виділити.');
   } else lines.push('Вердикт: винна вся команда — немає гравця, який явно гірший за інших.');
-  if (!report.parsed) lines.push('Детальних даних немає, лише базова статистика.');
-  const draft = draftText(report.draft);
-  if (draft) lines.push(`Драфт (лише контекст, не вина): ${draft}.`);
+  lines.push(...contextFacts(report));
 
   report.players.slice(0, 3).forEach((p, i) => {
     lines.push(`${i + 1}. ${p.hero}, позиція ${p.position}, ${p.score} балів.`);
@@ -104,7 +144,9 @@ export function fallbackVerdict(report: BlameReport, tone: AnalysisTone): string
     );
     if (main.evidence.length) parts.push(`${capitalize(main.evidence.slice(0, 2).join(', а ще '))}.`);
   } else if (report.verdict.kind === 'team' && report.verdict.reason === 'behind-everywhere') {
-    parts.push('Розбір поразки. Тут винні всі: до п’ятнадцятої хвилини програли кожну лінію.');
+    parts.push('Розбір поразки. Тут винні всі: на десятій хвилині програли кожну лінію.');
+  } else if (report.verdict.kind === 'team' && report.verdict.reason === 'not-enough-data') {
+    parts.push('Розбір поразки. Даних поки замало, тож головного винного не називаю.');
   } else {
     parts.push(tone === 'harsh' ? 'Розбір поразки. Явного винного нема, злили всі разом, красавчики.' : 'Розбір поразки. Явного винного нема, програли командою.');
   }
@@ -130,9 +172,7 @@ export function formatMvpChat(report: MvpReport, verdictText?: string): string {
   const top = mvps(report);
   if (top.length === 2) lines.push(`🏆 **MVP: ${top[0]!.hero} і ${top[1]!.hero}** (${top[0]!.score} і ${top[1]!.score} балів, різниця менше ${MVP_SHARE_GAP})`);
   else if (top[0]) lines.push(`🏆 **MVP: ${top[0].hero}** (${top[0].score} балів)`);
-  if (!report.parsed) lines.push('_⚠️ OpenDota ще не розібрав запис: лайн і частину виживання не враховано._');
-  const draft = draftText(report.draft);
-  if (draft) lines.push(`🧩 Драфт: ${draft}`);
+  lines.push(...contextLines(report));
   if (verdictText) lines.push(`> ${verdictText}`);
 
   lines.push('```');
@@ -172,9 +212,7 @@ export function mvpUserPrompt(report: MvpReport): string {
   const top = mvps(report);
   if (top.length === 2) lines.push(`MVP ділять двоє: ${top[0]!.hero} (${top[0]!.score}) і ${top[1]!.hero} (${top[1]!.score}) — різниця менше ${MVP_SHARE_GAP} балів.`);
   else if (top[0]) lines.push(`MVP — ${top[0].hero} (позиція ${top[0].position}), ${top[0].score} балів внеску зі 100.`);
-  if (!report.parsed) lines.push('Детальних даних немає, лише базова статистика.');
-  const draft = draftText(report.draft);
-  if (draft) lines.push(`Драфт (лише контекст, не вина): ${draft}.`);
+  lines.push(...contextFacts(report));
   report.players.slice(0, 3).forEach((p, i) => {
     lines.push(`${i + 1}. ${p.hero}, позиція ${p.position}, ${p.score} балів.`);
     if (p.evidence.length) lines.push(`   Факти: ${p.evidence.join('; ')}.`);

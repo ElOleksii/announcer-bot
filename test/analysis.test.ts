@@ -131,7 +131,7 @@ describe('computeBlame rules', () => {
     expect(first!.categories.find((c) => c.key === 'survival')!.evidence.join(' ')).toContain('18 смертей');
   });
 
-  it('blames the whole team when every core is far behind at 15 minutes', () => {
+  it('blames the whole team when every lane was lost at 10 minutes', () => {
     const match = tweak((ours) => {
       for (const p of ours.filter((x) => (x.position_est ?? 5) <= 3)) p.gold_t = p.gold_t!.map((g) => Math.round(g * 0.5));
     });
