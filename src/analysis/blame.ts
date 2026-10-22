@@ -83,6 +83,7 @@ export function categories(rating: PlayerRating, sign: 1 | -1): Array<Scored<Are
       key: a.key,
       points: round1(a.weight * Math.max(0, sign * (a.value ?? 0))),
       max: round1(a.weight),
+      outOfTen: round1(10 * Math.max(0, sign * (a.value ?? 0))),
       available: a.weight > 0,
       evidence: (sign === 1 ? a.good : a.bad).map((f) => f.text),
     }));

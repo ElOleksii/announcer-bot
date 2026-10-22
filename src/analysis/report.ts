@@ -2,6 +2,7 @@ import { CATEGORY_LABELS, type BlameReport, type PlayerBlame } from './blame.js'
 import type { Confidence } from './confidence.js';
 import type { DraftOutlook } from './draft.js';
 import type { KeyFight } from './keyfight.js';
+import type { CategoryScore } from './scoring.js';
 import { MVP_CATEGORY_LABELS, MVP_SHARE_GAP, type MvpReport, type PlayerContribution } from './mvp.js';
 
 export const ANALYSIS_TONES = ['harsh', 'light'] as const;
@@ -11,6 +12,18 @@ export type AnalysisTone = (typeof ANALYSIS_TONES)[number];
 export const VERDICT_MAX_LENGTH = 600;
 
 const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+
+/**
+ * "бійки 3.7/10, фарм 2.1/10": every area on the same 0–10 scale, highest first. (Points out of
+ * the role weight would give each area a different maximum; the weights live in the total.)
+ */
+function areaList(categories: CategoryScore[], labels: Record<string, string>): string {
+  return categories
+    .filter((c) => c.available && c.points > 0)
+    .sort((a, b) => b.outOfTen - a.outOfTen || b.points - a.points)
+    .map((c) => `${labels[c.key]} ${c.outOfTen}/10`)
+    .join(', ');
+}
 
 /** "орієнтовно 46% на перемогу (сила героїв у цьому ранзі та матчапи)" — context only, never blame. */
 function draftText(draft: DraftOutlook | null): string | null {
@@ -80,10 +93,7 @@ export function formatChatReport(report: BlameReport, verdictText?: string): str
 
   lines.push('```');
   for (const p of report.players) {
-    const cats = p.categories
-      .filter((c) => c.available && c.points > 0)
-      .map((c) => `${CATEGORY_LABELS[c.key]} ${c.points}/${c.max}`)
-      .join(', ');
+    const cats = areaList(p.categories, CATEGORY_LABELS);
     lines.push(`${String(p.score).padStart(3)}  pos${p.position} ${p.hero}${cats ? ` — ${cats}` : ''}`);
     for (const fact of p.evidence) lines.push(`       • ${fact}`);
     if (p.mitigations.length) lines.push(`       + ${p.mitigations.join(', ')}`);
@@ -177,10 +187,7 @@ export function formatMvpChat(report: MvpReport, verdictText?: string): string {
 
   lines.push('```');
   for (const p of report.players) {
-    const cats = p.categories
-      .filter((c) => c.available && c.points > 0)
-      .map((c) => `${MVP_CATEGORY_LABELS[c.key]} ${c.points}/${c.max}`)
-      .join(', ');
+    const cats = areaList(p.categories, MVP_CATEGORY_LABELS);
     lines.push(`${String(p.score).padStart(3)}  pos${p.position} ${p.hero}${cats ? ` — ${cats}` : ''}`);
     for (const fact of p.evidence) lines.push(`       • ${fact}`);
     if (p.modifiers.length) lines.push(`       − ${p.modifiers.join(', ')}`);

@@ -4,7 +4,8 @@ import { BENCHMARK_MEDIAN, benchmarkScore, shareScore, signedRamp, versus } from
 import { computeBlame } from '../src/analysis/blame.js';
 import { computeMvp } from '../src/analysis/mvp.js';
 import { matchSchema, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
-import { OFFSET, ROLE_WEIGHTS, rateTeam } from '../src/analysis/rating.js';
+import { AREA_LABELS, OFFSET, ROLE_WEIGHTS, rateTeam } from '../src/analysis/rating.js';
+import { formatChatReport, formatMvpChat } from '../src/analysis/report.js';
 import { round1, sum } from '../src/analysis/scoring.js';
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')) as unknown;
@@ -86,6 +87,38 @@ describe('one rating for wins and losses', () => {
       expect(p.areas.find((a) => a.key === 'lane')!.weight).toBe(0);
       expect(p.areas.find((a) => a.key === 'farm')!.value === null).toBe(false);
       expect(p.blame).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
+describe('area scores on one 0–10 scale', () => {
+  const match = load('opendota-ranked-parsed');
+
+  it('is 10 × how far the area was from expectations, whatever its weight', () => {
+    const rated = rateTeam(match, heroes, false).players;
+    for (const p of computeBlame(match, heroes, false).players) {
+      const areas = rated.find((r) => r.slot === p.slot)!.areas;
+      for (const c of p.categories) {
+        const value = areas.find((a) => a.key === c.key)!.value ?? 0;
+        expect(c.outOfTen).toBeCloseTo(round1(10 * Math.max(0, -value)), 5);
+        expect(c.outOfTen).toBeGreaterThanOrEqual(0);
+        expect(c.outOfTen).toBeLessThanOrEqual(10);
+      }
+    }
+  });
+
+  it('the chat lists areas as x/10, highest first', () => {
+    const blame = computeBlame(match, heroes, false);
+    for (const text of [formatChatReport(blame), formatMvpChat(computeMvp(match, heroes, true))]) {
+      const rows = text.split('\n').filter((l) => / — /.test(l) && /pos\d/.test(l));
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) for (const area of row.split(' — ')[1]!.split(', ')) expect(area).toMatch(/^\S+ \d+(\.\d)?\/10$/);
+    }
+    for (const p of blame.players) {
+      const row = formatChatReport(blame).split('\n').find((l) => l.includes(`pos${p.position} ${p.hero}`))!;
+      const shownKeys = p.categories.filter((c) => c.available && c.points > 0).sort((a, b) => b.outOfTen - a.outOfTen || b.points - a.points);
+      const shownLabels = row.includes(' — ') ? row.split(' — ')[1]!.split(', ').map((a) => a.split(' ')[0]) : [];
+      expect(shownLabels).toEqual(shownKeys.map((c) => AREA_LABELS[c.key]));
     }
   });
 });
