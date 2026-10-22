@@ -7,8 +7,10 @@ import { pick } from './areas/pick.js';
 import { support } from './areas/support.js';
 import { survival } from './areas/survival.js';
 import { AREA_KEYS, type AreaKey, type AreaScore, type Fact, type RatingInput } from './areas/common.js';
+import { confidence, type Confidence } from './confidence.js';
 import { buildContext, type MatchContext } from './context.js';
 import { draftOutlook, type DraftOutlook } from './draft.js';
+import { keyFight, type KeyFight } from './keyfight.js';
 import type { HeroInfo, OdMatch, OdPlayer } from './opendota.js';
 import { NO_REFERENCE, type ReferenceData } from './reference.js';
 import { isLeaver, num, round1, sum, swingMinutes } from './scoring.js';
@@ -77,6 +79,10 @@ export interface TeamRating {
   players: PlayerRating[];
   /** Context only: never part of anyone's score. */
   draft: DraftOutlook | null;
+  /** How much of the rating had data. */
+  confidence: Confidence;
+  /** The fight that swung the game most towards its result; context only. */
+  keyFight: KeyFight | null;
   opponentOf(p: OdPlayer): OdPlayer | null;
 }
 
@@ -96,7 +102,14 @@ export function rateTeam(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamI
     surges: swingMinutes(match, ourTeamIsRadiant, SURGE_GAIN),
   };
   const players = context.ours.map((p) => ratePlayer(p, input));
-  return { context, players, opponentOf, draft: draftOutlook(context, ref) };
+  return {
+    context,
+    players,
+    opponentOf,
+    draft: draftOutlook(context, ref),
+    confidence: confidence(players, context.parsed),
+    keyFight: keyFight(context, input.heroName),
+  };
 }
 
 function ratePlayer(p: OdPlayer, input: RatingInput): PlayerRating {

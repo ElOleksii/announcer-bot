@@ -2,11 +2,15 @@ import type { OdMatch, OdPlayer } from './opendota.js';
 
 /** Shared building blocks for the rating, the match context and the reports. */
 
-/** One row of the chat table: an area's points out of what it can move for the player. */
+/** One row of the chat table for an area. */
 export interface CategoryScore<K extends string = string> {
   key: K;
+  /** What the area added to the 0–100 score… */
   points: number;
+  /** …out of what it could add for this player (its role weight). */
   max: number;
+  /** The same area on one 0–10 scale for everyone: how far it was below (loss) or above (win) expectations. */
+  outOfTen: number;
   /** false when the match lacks the data for this area (e.g. not parsed). */
   available: boolean;
   /** Facts with numbers that explain the points. */
