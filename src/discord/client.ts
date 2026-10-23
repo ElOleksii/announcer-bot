@@ -3,7 +3,8 @@ import type { AnalysisSink } from '../analysis/job.js';
 import type { DiscordConfig } from '../config/env.js';
 import type { SoundKey } from '../game/events.js';
 import type { Logger } from '../logger.js';
-import { clampMessage, handleCommand, registerGuildCommands, type CommandContext } from './commands.js';
+import { handleCommand, registerGuildCommands, type CommandContext } from './commands.js';
+import { splitMessage, syncMessages } from './messages.js';
 import type { VoiceManager } from './voice.js';
 
 export interface DiscordBotOptions {
@@ -110,32 +111,31 @@ export function createDiscordBot({ config, logger, voice, soundKeys, commands, o
       await client.destroy();
     },
     createChannelSink(channelId) {
-      let message: Message | null = null;
+      /** The analysis, split into as many messages as it needs (see splitMessage). */
+      let messages: Message[] = [];
+      /** Where the first message went; the rest of the analysis follows it there. */
+      let target: { send(content: string): Promise<Message> } | null = null;
+      const send = async (content: string) => {
+        if (target) return target.send(content);
+        for (const id of analysisCandidates(channelId)) {
+          try {
+            const channel = client.channels.cache.get(id) ?? (await client.channels.fetch(id));
+            if (!channel?.isSendable()) continue;
+            const message = await channel.send(content);
+            target = channel;
+            return message;
+          } catch (err) {
+            log.warn({ err: (err as Error).message, channelId: id }, 'cannot post the analysis there (missing Send Messages permission?)');
+          }
+        }
+        throw new Error('no channel to post the analysis (set ANALYSIS_CHANNEL_ID and give the bot Send Messages)');
+      };
       return {
         get url() {
-          return message?.url ?? null;
+          return messages[0]?.url ?? null;
         },
         async update(text) {
-          const content = clampMessage(text);
-          if (message) {
-            try {
-              await message.edit(content);
-              return;
-            } catch (err) {
-              log.warn({ err: (err as Error).message }, 'cannot edit the analysis message, posting a new one');
-            }
-          }
-          for (const id of analysisCandidates(channelId)) {
-            try {
-              const channel = client.channels.cache.get(id) ?? (await client.channels.fetch(id));
-              if (!channel?.isSendable()) continue;
-              message = await channel.send(content);
-              return;
-            } catch (err) {
-              log.warn({ err: (err as Error).message, channelId: id }, 'cannot post the analysis there (missing Send Messages permission?)');
-            }
-          }
-          throw new Error('no channel to post the analysis (set ANALYSIS_CHANNEL_ID and give the bot Send Messages)');
+          messages = await syncMessages(messages, splitMessage(text), send);
         },
       };
     },

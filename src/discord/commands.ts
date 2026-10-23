@@ -14,6 +14,7 @@ import { ANALYSIS_TONES, type AnalysisTone } from '../analysis/report.js';
 import { ANNOUNCER_MODES, type AnnouncerMode } from '../announcer.js';
 import { describeEvent, type SoundKey } from '../game/events.js';
 import type { StatusSnapshot } from '../status.js';
+import { splitMessage, syncMessages } from './messages.js';
 
 const MODE_LABELS: Record<AnnouncerMode, string> = {
   sounds: 'звуки',
@@ -26,8 +27,6 @@ export const MAX_SAY_LENGTH = 300;
 
 const TONE_LABELS: Record<AnalysisTone, string> = { harsh: 'жорстко', light: 'лайтово' };
 
-/** Discord message limit. */
-const MAX_MESSAGE = 2000;
 
 /** The analysis itself arrives through the sink; this only says whether a job was started. */
 export type AnalyzeOutcome = { kind: 'started' } | { kind: 'already-running'; url: string | null } | { kind: 'no-match' };
@@ -36,40 +35,41 @@ export type AnalyzeOutcome = { kind: 'started' } | { kind: 'already-running'; ur
 const INTERACTION_EDIT_WINDOW_MS = 14 * 60_000;
 
 /**
- * Sink for /analyze: edits the command's reply while the interaction token is valid,
- * then continues in a regular message in the same channel.
+ * Sink for /analyze: edits the command's reply while the interaction token is valid (a long
+ * analysis continues in messages right below it), then moves to regular messages in the channel.
  */
 export function interactionSink(interaction: ChatInputCommandInteraction<'cached'>, now: () => number = Date.now): AnalysisSink {
   const started = now();
   let replyUrl: string | null = null;
-  let fallback: Message | null = null;
+  /** Parts after the first, below the reply. */
+  let below: Message[] = [];
+  /** The whole analysis, once the token has expired. */
+  let fallback: Message[] = [];
+  const send = async (content: string) => {
+    const channel = interaction.channel;
+    if (!channel?.isSendable()) throw new Error('cannot post the analysis in this channel');
+    return channel.send(content);
+  };
   return {
     get url() {
-      return fallback?.url ?? replyUrl;
+      return fallback[0]?.url ?? replyUrl;
     },
     async update(text) {
-      const content = clampMessage(text);
-      if (!fallback && now() - started < INTERACTION_EDIT_WINDOW_MS) {
-        const reply = await interaction.editReply(content);
+      const parts = splitMessage(text);
+      if (fallback.length === 0 && now() - started < INTERACTION_EDIT_WINDOW_MS) {
+        const reply = await interaction.editReply(parts[0]!);
         replyUrl = reply.url;
+        below = await syncMessages(below, parts.slice(1), send);
         return;
       }
-      if (fallback) {
-        await fallback.edit(content);
-        return;
+      if (below.length) {
+        // Moving to new messages: drop the old continuation so the parts stay in order.
+        await syncMessages(below, [], send);
+        below = [];
       }
-      const channel = interaction.channel;
-      if (!channel?.isSendable()) throw new Error('cannot post the analysis in this channel');
-      fallback = await channel.send(content);
+      fallback = await syncMessages(fallback, parts, send);
     },
   };
-}
-
-export function clampMessage(text: string): string {
-  if (text.length <= MAX_MESSAGE) return text;
-  const cut = text.slice(0, MAX_MESSAGE - 6);
-  // Keep a code block closed if we cut inside it.
-  return (cut.split('```').length % 2 === 0 ? `${cut}\n\`\`\`` : cut).slice(0, MAX_MESSAGE - 2) + ' …';
 }
 
 /** Discord allows at most 25 choices per option. */

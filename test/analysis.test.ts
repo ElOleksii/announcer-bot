@@ -8,7 +8,6 @@ import { ROLE_WEIGHTS, rateTeam } from '../src/analysis/rating.js';
 import { assignPositions, computeBlame, findOurTeam, plural, ramp, CULPRIT_MIN_SCORE } from '../src/analysis/blame.js';
 import { OpenDotaClient, matchSchema, steamIdToAccountId, type HeroInfo, type OdMatch } from '../src/analysis/opendota.js';
 import { fallbackMvpVerdict, fallbackVerdict, formatChatReport, formatMvpChat, mvpUserPrompt, verdictUserPrompt } from '../src/analysis/report.js';
-import { clampMessage } from '../src/discord/commands.js';
 import { parseGsiPayload, type GsiPayload } from '../src/gsi/schema.js';
 import { playing } from './helpers.js';
 
@@ -211,13 +210,6 @@ describe('report text', () => {
     const text = fallbackVerdict(report, tone);
     expect(text.length).toBeGreaterThan(30);
     expect(text).not.toMatch(/[*`_#]/);
-  });
-
-  it('clampMessage keeps Discord limits and closes code blocks', () => {
-    const long = `head\n\`\`\`\n${'рядок з фактами\n'.repeat(200)}\`\`\``;
-    const clamped = clampMessage(long);
-    expect(clamped.length).toBeLessThanOrEqual(2000);
-    expect(clamped.split('```').length % 2).toBe(1);
   });
 });
 
