@@ -80,6 +80,8 @@ export interface MatchContext {
   fights: Fight[];
   /** Our players' deaths, in time order. */
   deaths: Death[];
+  /** Seconds each of our players spent disconnected after the horn, by slot (0 when never). */
+  disconnectedSec: Map<number, number>;
 }
 
 export function gameMode(match: OdMatch): GameMode {
@@ -95,6 +97,20 @@ export function rankBracket(players: OdPlayer[]): number | null {
 }
 
 /** Dead at `time`: died before it and still waiting to respawn. */
+/** Time between disconnects and reconnects after the horn; an unanswered disconnect lasts to the end. */
+export function disconnectedSec(p: OdPlayer, duration: number): number {
+  let total = 0;
+  let since: number | null = null;
+  for (const e of p.connection_log ?? []) {
+    if (e.event === 'disconnect') since ??= Math.max(0, e.time);
+    else if (e.event === 'reconnect' && since !== null) {
+      total += Math.max(0, e.time - since);
+      since = null;
+    }
+  }
+  return since === null ? total : total + Math.max(0, duration - since);
+}
+
 function deadAt(p: OdPlayer, time: number): boolean {
   return (p.deaths_log ?? []).some((d) => d.time < time && d.time + (d.time_dead ?? 0) > time);
 }
@@ -182,6 +198,7 @@ export function buildContext(match: OdMatch, ourTeamIsRadiant: boolean): MatchCo
     lanes,
     fights,
     deaths,
+    disconnectedSec: new Map(ours.map((p) => [p.player_slot, disconnectedSec(p, match.duration)])),
   };
 }
 

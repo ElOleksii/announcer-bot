@@ -1,6 +1,8 @@
 import type { AreaKey } from './areas/common.js';
 import { categories } from './blame.js';
+import type { Confidence } from './confidence.js';
 import type { DraftOutlook } from './draft.js';
+import type { KeyFight } from './keyfight.js';
 import type { HeroInfo, OdMatch } from './opendota.js';
 import { AREA_LABELS, rateTeam } from './rating.js';
 import type { ReferenceData } from './reference.js';
@@ -47,10 +49,12 @@ export interface MvpReport {
   mvpSlots: number[];
   /** Rough read of the draft, shown as context; null without hero stats. */
   draft: DraftOutlook | null;
+  confidence: Confidence;
+  keyFight: KeyFight | null;
 }
 
 export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTeamIsRadiant: boolean, ref?: ReferenceData): MvpReport {
-  const { context, players: ratings, draft } = rateTeam(match, heroes, ourTeamIsRadiant, ref);
+  const { context, players: ratings, draft, confidence, keyFight } = rateTeam(match, heroes, ourTeamIsRadiant, ref);
   const players: PlayerContribution[] = ratings.map((r) => ({
     slot: r.slot,
     hero: r.hero,
@@ -73,6 +77,8 @@ export function computeMvp(match: OdMatch, heroes: Map<number, HeroInfo>, ourTea
     players,
     mvpSlots: pickMvps(players),
     draft,
+    confidence,
+    keyFight,
   };
 }
 

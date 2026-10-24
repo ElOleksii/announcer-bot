@@ -52,7 +52,9 @@ if (matches.length === 0) {
 const rows: Row[] = [];
 /** The draft line's expected chance against the real result, from both teams' sides. */
 const draftRows: Array<{ won: boolean; expected: number }> = [];
-const verdicts = { culprit: 0, 'behind-everywhere': 0, 'no-clear-culprit': 0 };
+const verdicts = { culprit: 0, 'leaver culprit': 0, 'behind-everywhere': 0, 'no-clear-culprit': 0, 'not-enough-data': 0 };
+const confidenceLevels = { high: 0, medium: 0, low: 0 };
+let keyFights = 0;
 /** Our lane totals divided by theirs at the lane minute, by the kind of lane our core played. */
 const laneRatios: Record<'safe' | 'mid', { gold: number[]; xp: number[] }> = { safe: { gold: [], xp: [] }, mid: { gold: [], xp: [] } };
 /** Per player and match, from the match context: how they died and which fights they were in. */
@@ -83,8 +85,11 @@ for (const match of matches) {
     if (blame.draft) draftRows.push({ won: match.radiant_win === radiant, expected: blame.draft.expected });
     const won = match.radiant_win === radiant;
     if (!won) {
-      const key = blame.verdict.kind === 'culprit' ? 'culprit' : blame.verdict.reason;
-      verdicts[key]++;
+      const verdict = blame.verdict;
+      const leaverCulprit = verdict.kind === 'culprit' && blame.players.find((p) => p.slot === verdict.slot)?.leaver;
+      verdicts[verdict.kind === 'culprit' ? (leaverCulprit ? 'leaver culprit' : 'culprit') : verdict.reason]++;
+      confidenceLevels[blame.confidence.level]++;
+      if (blame.keyFight) keyFights++;
     }
     for (const b of blame.players) {
       const m = mvp.players.find((x) => x.slot === b.slot)!;
@@ -95,7 +100,8 @@ for (const match of matches) {
         mvp: m.score,
         blameCats: Object.fromEntries(b.categories.map((c) => [c.key, c.points])),
         mvpCats: Object.fromEntries(m.categories.map((c) => [c.key, c.points])),
-        culprit: blame.verdict.kind === 'culprit' && blame.verdict.slot === b.slot,
+        // Culprits by points only: a leaver is the culprit by rule.
+        culprit: blame.verdict.kind === 'culprit' && blame.verdict.slot === b.slot && !b.leaver,
         isMvp: mvp.mvpSlots.includes(b.slot),
       });
     }
@@ -168,9 +174,15 @@ console.log(`\n${matches.length} matches from ${dir} (${matches.filter((m) => m.
 
 console.log('Loss verdicts');
 console.table({
-  culprit: share(verdicts.culprit, losses),
-  'team: behind everywhere': share(verdicts['behind-everywhere'], losses),
+  'culprit (leaver)': share(verdicts['leaver culprit'], losses),
+  'culprit (by points)': share(verdicts.culprit, losses),
+  'team: lost every lane': share(verdicts['behind-everywhere'], losses),
   'team: no clear culprit': share(verdicts['no-clear-culprit'], losses),
+  'team: not enough data': share(verdicts['not-enough-data'], losses),
+});
+console.table({
+  'confidence high / medium / low': `${confidenceLevels.high} / ${confidenceLevels.medium} / ${confidenceLevels.low}`,
+  'losses with a key fight (2000+ gold)': share(keyFights, losses),
 });
 
 console.log('Blame on the losing team, by position (AUC: how well blame tells losers from winners)');
