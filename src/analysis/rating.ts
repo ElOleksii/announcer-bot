@@ -22,13 +22,18 @@ import { isLeaver, num, round1, sum, swingMinutes } from './scoring.js';
  * numbers and thresholds either way.
  */
 
-/** How much each area weighs per position (1–5); areas without data drop out and the rest scale to 100. */
+/**
+ * How much each area weighs per position (1–5); areas without data drop out and the rest scale to
+ * 100. Checked on 132 ranked All Pick matches (npm run fit-weights): items showed almost no link to
+ * winning except for pos4 (10 → 7 elsewhere), fights none for supports (pos4 25 → 21, pos5 18 → 15),
+ * and survival a clear link at every position, so it gets the freed points.
+ */
 export const ROLE_WEIGHTS: Record<number, Record<AreaKey, number>> = {
-  1: { lane: 15, farm: 25, fights: 18, survival: 15, objectives: 12, support: 0, items: 10, pick: 5 },
-  2: { lane: 18, farm: 18, fights: 22, survival: 14, objectives: 10, support: 3, items: 10, pick: 5 },
-  3: { lane: 15, farm: 10, fights: 25, survival: 8, objectives: 12, support: 15, items: 10, pick: 5 },
-  4: { lane: 12, farm: 3, fights: 25, survival: 12, objectives: 3, support: 30, items: 10, pick: 5 },
-  5: { lane: 12, farm: 0, fights: 18, survival: 12, objectives: 5, support: 38, items: 10, pick: 5 },
+  1: { lane: 15, farm: 25, fights: 18, survival: 18, objectives: 12, support: 0, items: 7, pick: 5 },
+  2: { lane: 18, farm: 18, fights: 22, survival: 17, objectives: 10, support: 3, items: 7, pick: 5 },
+  3: { lane: 15, farm: 10, fights: 25, survival: 11, objectives: 12, support: 15, items: 7, pick: 5 },
+  4: { lane: 12, farm: 3, fights: 21, survival: 16, objectives: 3, support: 30, items: 10, pick: 5 },
+  5: { lane: 12, farm: 0, fights: 15, survival: 18, objectives: 5, support: 38, items: 7, pick: 5 },
 };
 
 export const AREA_LABELS: Record<AreaKey, string> = {

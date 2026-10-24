@@ -106,8 +106,8 @@ describe('confidence', () => {
     }) as PlayerRating;
 
   it('is the share of role weight that had data, and needs a parsed replay to be more than low', () => {
-    // Position 1 without pick (5) and items (10): 85 of 100.
-    expect(confidence([rating(1, ['pick', 'items'])], true)).toEqual({ level: 'high', coverage: HIGH_COVERAGE });
+    // Position 1 without lane (15): 85 of 100.
+    expect(confidence([rating(1, ['lane'])], true)).toEqual({ level: 'high', coverage: HIGH_COVERAGE });
     // Position 1 without lane (15) and objectives (12): 73 of 100.
     expect(confidence([rating(1, ['lane', 'objectives'])], true).level).toBe('medium');
     expect(confidence([rating(1, ['lane', 'objectives', 'farm'])], true).coverage).toBeLessThan(MEDIUM_COVERAGE);
