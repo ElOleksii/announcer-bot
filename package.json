@@ -14,7 +14,8 @@
     "gen:sounds": "tsx scripts/gen-placeholders.ts",
     "test:commentary": "tsx scripts/test-commentary.ts",
     "collect": "tsx scripts/collect-matches.ts",
-    "calibrate": "tsx scripts/calibrate.ts"
+    "calibrate": "tsx scripts/calibrate.ts",
+    "fit-weights": "tsx scripts/fit-weights.ts"
   },
   "type": "module",
   "description": "Discord bot that announces your Dota 2 kills via Game State Integration",
